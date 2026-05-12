@@ -1,0 +1,8 @@
+source_up
+
+export TF_ACC=true
+export COCKROACH_HOST=localhost
+export COCKROACH_PORT=26020
+export COCKROACH_USER=root
+export COCKROACH_DATABASE=tf_tests
+export COCKROACH_INSECURE=true

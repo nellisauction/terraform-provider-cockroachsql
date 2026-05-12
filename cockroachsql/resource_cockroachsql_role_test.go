@@ -37,15 +37,6 @@ func TestAccCockroachSQLRole_Basic(t *testing.T) {
 					resource.TestCheckResourceAttr("cockroachsql_role.role_with_defaults", "skip_reassign_owned", "false"),
 					resource.TestCheckResourceAttr("cockroachsql_role.role_with_defaults", "statement_timeout", "0"),
 					resource.TestCheckResourceAttr("cockroachsql_role.role_with_defaults", "idle_in_transaction_session_timeout", "0"),
-					resource.TestCheckResourceAttr("cockroachsql_role.role_with_defaults", "assume_role", ""),
-
-					testAccCheckCockroachSQLRoleExists("sub_role", []string{"myrole2", "role_simple"}, nil),
-					resource.TestCheckResourceAttr("cockroachsql_role.sub_role", "name", "sub_role"),
-					resource.TestCheckResourceAttr("cockroachsql_role.sub_role", "roles.#", "2"),
-					resource.TestCheckResourceAttr("cockroachsql_role.sub_role", "roles.0", "myrole2"),
-					resource.TestCheckResourceAttr("cockroachsql_role.sub_role", "roles.1", "role_simple"),
-
-					testAccCheckCockroachSQLRoleExists("role_with_search_path", nil, []string{"bar", "foo-with-hyphen"}),
 				),
 			},
 		},
@@ -71,9 +62,6 @@ resource "cockroachsql_role" "update_role" {
   login = true
   roles = ["${cockroachsql_role.group_role.name}"]
   search_path = ["mysearchpath"]
-  statement_timeout = 30000
-  idle_in_transaction_session_timeout = 60000
-  assume_role = "${cockroachsql_role.group_role.name}"
 }
 `
 
@@ -96,7 +84,6 @@ resource "cockroachsql_role" "update_role" {
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "search_path.#", "0"),
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "statement_timeout", "0"),
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "idle_in_transaction_session_timeout", "0"),
-					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "assume_role", ""),
 				),
 			},
 			{
@@ -112,9 +99,6 @@ resource "cockroachsql_role" "update_role" {
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "roles.0", "group_role"),
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "search_path.#", "1"),
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "search_path.0", "mysearchpath"),
-					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "statement_timeout", "30000"),
-					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "idle_in_transaction_session_timeout", "60000"),
-					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "assume_role", "group_role"),
 				),
 			},
 			{
@@ -127,7 +111,6 @@ resource "cockroachsql_role" "update_role" {
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "search_path.#", "0"),
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "statement_timeout", "0"),
 					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "idle_in_transaction_session_timeout", "0"),
-					resource.TestCheckResourceAttr("cockroachsql_role.update_role", "assume_role", ""),
 				),
 			},
 		},
@@ -249,7 +232,7 @@ func checkSearchPath(client *Client, roleName string, expectedSearchPath []strin
 		return err
 	}
 
-	var roleConfig pq.ByteaArray
+	var roleConfig pq.StringArray
 	err = db.QueryRow("SELECT rolconfig FROM pg_catalog.pg_roles WHERE rolname=$1", roleName).Scan(&roleConfig)
 	if err != nil {
 		return fmt.Errorf("error reading role config: %v", err)

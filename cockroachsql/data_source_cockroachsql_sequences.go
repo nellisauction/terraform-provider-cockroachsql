@@ -95,7 +95,6 @@ func dataSourceCockroachSQLSequencesRead(db *DBConnection, d *schema.ResourceDat
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	query := sequenceQuery

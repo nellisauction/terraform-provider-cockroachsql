@@ -205,43 +205,54 @@ func resourceCockroachSQLGrantDelete(db *DBConnection, d *schema.ResourceData) e
 
 func readDatabaseRolePrivileges(db QueryAble, d *schema.ResourceData, roleOID uint32) error {
 	dbName := d.Get("database").(string)
-	query := `
-SELECT array_agg(privilege_type)
-FROM (
-	SELECT (aclexplode(datacl)).* FROM pg_database WHERE datname=$1
-) as privileges
-WHERE grantee = $2
-`
+	roleName := d.Get("role").(string)
 
-	var privileges pq.ByteaArray
-	if err := db.QueryRow(query, dbName, roleOID).Scan(&privileges); err != nil {
+	query := fmt.Sprintf("SHOW GRANTS ON DATABASE %s FOR %s", pq.QuoteIdentifier(dbName), pq.QuoteIdentifier(roleName))
+	rows, err := db.Query(query)
+	if err != nil {
 		return fmt.Errorf("could not read privileges for database %s: %w", dbName, err)
 	}
-	granted := pgArrayToSet(privileges)
-	if !resourcePrivilegesEqual(granted, d) {
-		return d.Set("privileges", granted)
+	defer func() { _ = rows.Close() }()
+
+	grantedSet := schema.NewSet(schema.HashString, []any{})
+	for rows.Next() {
+		var dbNameScan, grantee, privilege string
+		var isGrantable bool
+		if err := rows.Scan(&dbNameScan, &grantee, &privilege, &isGrantable); err != nil {
+			return err
+		}
+		grantedSet.Add(strings.ToUpper(privilege))
+	}
+
+	if !resourcePrivilegesEqual(grantedSet, d) {
+		return d.Set("privileges", grantedSet)
 	}
 	return nil
 }
 
 func readSchemaRolePrivileges(db QueryAble, d *schema.ResourceData, roleOID uint32) error {
-	dbName := d.Get("schema").(string)
-	query := `
-SELECT array_agg(privilege_type)
-FROM (
-	SELECT (aclexplode(nspacl)).* FROM pg_namespace WHERE nspname=$1
-) as privileges
-WHERE grantee = $2
-`
+	schemaName := d.Get("schema").(string)
+	roleName := d.Get("role").(string)
 
-	var privileges pq.ByteaArray
-	if err := db.QueryRow(query, dbName, roleOID).Scan(&privileges); err != nil {
-		return fmt.Errorf("could not read privileges for schema %s: %w", dbName, err)
+	query := fmt.Sprintf("SHOW GRANTS ON SCHEMA %s FOR %s", pq.QuoteIdentifier(schemaName), pq.QuoteIdentifier(roleName))
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("could not read privileges for schema %s: %w", schemaName, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	grantedSet := schema.NewSet(schema.HashString, []any{})
+	for rows.Next() {
+		var dbName, sName, grantee, privilege string
+		var isGrantable bool
+		if err := rows.Scan(&dbName, &sName, &grantee, &privilege, &isGrantable); err != nil {
+			return err
+		}
+		grantedSet.Add(strings.ToUpper(privilege))
 	}
 
-	granted := pgArrayToSet(privileges)
-	if !resourcePrivilegesEqual(granted, d) {
-		return d.Set("privileges", granted)
+	if !resourcePrivilegesEqual(grantedSet, d) {
+		return d.Set("privileges", grantedSet)
 	}
 	return nil
 }
@@ -249,22 +260,27 @@ WHERE grantee = $2
 func readForeignDataWrapperRolePrivileges(db QueryAble, d *schema.ResourceData, roleOID uint32) error {
 	objects := d.Get("objects").(*schema.Set).List()
 	fdwName := objects[0].(string)
-	query := `
-SELECT pg_catalog.array_agg(privilege_type)
-FROM (
-	SELECT (pg_catalog.aclexplode(fdwacl)).* FROM pg_catalog.pg_foreign_data_wrapper WHERE fdwname=$1
-) as privileges
-WHERE grantee = $2
-`
+	roleName := d.Get("role").(string)
 
-	var privileges pq.ByteaArray
-	if err := db.QueryRow(query, fdwName, roleOID).Scan(&privileges); err != nil {
+	query := fmt.Sprintf("SHOW GRANTS ON FOREIGN DATA WRAPPER %s FOR %s", pq.QuoteIdentifier(fdwName), pq.QuoteIdentifier(roleName))
+	rows, err := db.Query(query)
+	if err != nil {
 		return fmt.Errorf("could not read privileges for foreign data wrapper %s: %w", fdwName, err)
 	}
+	defer func() { _ = rows.Close() }()
 
-	granted := pgArrayToSet(privileges)
-	if !resourcePrivilegesEqual(granted, d) {
-		return d.Set("privileges", granted)
+	grantedSet := schema.NewSet(schema.HashString, []any{})
+	for rows.Next() {
+		var fName, grantee, privilege string
+		var isGrantable bool
+		if err := rows.Scan(&fName, &grantee, &privilege, &isGrantable); err != nil {
+			return err
+		}
+		grantedSet.Add(strings.ToUpper(privilege))
+	}
+
+	if !resourcePrivilegesEqual(grantedSet, d) {
+		return d.Set("privileges", grantedSet)
 	}
 	return nil
 }
@@ -272,33 +288,35 @@ WHERE grantee = $2
 func readForeignServerRolePrivileges(db QueryAble, d *schema.ResourceData, roleOID uint32) error {
 	objects := d.Get("objects").(*schema.Set).List()
 	srvName := objects[0].(string)
-	query := `
-SELECT pg_catalog.array_agg(privilege_type)
-FROM (
-	SELECT (pg_catalog.aclexplode(srvacl)).* FROM pg_catalog.pg_foreign_server WHERE srvname=$1
-) as privileges
-WHERE grantee = $2
-`
+	roleName := d.Get("role").(string)
 
-	var privileges pq.ByteaArray
-	if err := db.QueryRow(query, srvName, roleOID).Scan(&privileges); err != nil {
+	query := fmt.Sprintf("SHOW GRANTS ON FOREIGN SERVER %s FOR %s", pq.QuoteIdentifier(srvName), pq.QuoteIdentifier(roleName))
+	rows, err := db.Query(query)
+	if err != nil {
 		return fmt.Errorf("could not read privileges for foreign server %s: %w", srvName, err)
 	}
+	defer func() { _ = rows.Close() }()
 
-	granted := pgArrayToSet(privileges)
-	if !resourcePrivilegesEqual(granted, d) {
-		return d.Set("privileges", granted)
+	grantedSet := schema.NewSet(schema.HashString, []any{})
+	for rows.Next() {
+		var sName, grantee, privilege string
+		var isGrantable bool
+		if err := rows.Scan(&sName, &grantee, &privilege, &isGrantable); err != nil {
+			return err
+		}
+		grantedSet.Add(strings.ToUpper(privilege))
+	}
+
+	if !resourcePrivilegesEqual(grantedSet, d) {
+		return d.Set("privileges", grantedSet)
 	}
 	return nil
 }
 
 func readColumnRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 	objects := d.Get("objects").(*schema.Set)
+	missingColumns := d.Get("columns").(*schema.Set)
 
-	missingColumns := d.Get("columns").(*schema.Set) // Getting columns from state.
-	// If the query returns a column, it is a removed from the missingColumns.
-
-	// The attacl column of pg_attribute contains information only about explicit column grants
 	query := `
 SELECT relname AS table_name, attname AS column_name, array_agg(privilege_type) AS column_privileges
 FROM (SELECT relname, attname, (aclexplode(attacl)).*
@@ -327,7 +345,7 @@ ORDER BY col_privs.attname
 	for rows.Next() {
 		var objName string
 		var colName string
-		var privileges pq.ByteaArray
+		var privileges pq.StringArray
 
 		if err := rows.Scan(&objName, &colName, &privileges); err != nil {
 			return err
@@ -344,11 +362,9 @@ ORDER BY col_privs.attname
 		privilegesSet := pgArrayToSet(privileges)
 
 		if !privilegesSet.Equal(d.Get("privileges").(*schema.Set)) {
-			// If any object doesn't have the same privileges as saved in the state,
-			// we return its privileges to force an update.
 			log.Printf(
-				"[DEBUG] %s %s has not the expected privileges %v for role %s",
-				strings.ToTitle("column"), objName, privileges, d.Get("role"),
+				"[DEBUG] column %s has not the expected privileges %v for role %s",
+				objName, privileges, d.Get("role"),
 			)
 			d.Set("privileges", privilegesSet)
 			break
@@ -356,8 +372,6 @@ ORDER BY col_privs.attname
 	}
 
 	if missingColumns.Len() > 0 {
-		// If missingColumns is not empty by the end of the result processing loop
-		// it means that a column is missing
 		remainingColumns := d.Get("columns").(*schema.Set).Difference(missingColumns)
 		log.Printf(
 			"[DEBUG] Role %s does not have the expected privileges on columns",
@@ -396,6 +410,45 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 		return readForeignServerRolePrivileges(db, d, roleOID)
 
 	case "function", "procedure", "routine":
+		roleName := d.Get("role").(string)
+		schemaName := d.Get("schema").(string)
+		objectsList := d.Get("objects").(*schema.Set).List()
+
+		if len(objectsList) == 1 {
+			objName := objectsList[0].(string)
+			target := quoteTableName(schemaName) + "." + pq.QuoteIdentifier(objName)
+			if strings.Contains(objName, "(") {
+				target = quoteTableName(schemaName) + "." + objName
+			}
+
+			query = fmt.Sprintf("SHOW GRANTS ON %s %s FOR %s", strings.ToUpper(objectType), target, pq.QuoteIdentifier(roleName))
+			rows, err = db.Query(query)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+
+			grantedSet := schema.NewSet(schema.HashString, []any{})
+			for rows.Next() {
+				var dName, sName, rID, rSig, grantee, privilege string
+				var isGrantable bool
+				if err := rows.Scan(&dName, &sName, &rID, &rSig, &grantee, &privilege, &isGrantable); err != nil {
+					return err
+				}
+				p := strings.ToUpper(privilege)
+				if p == "ALL" {
+					grantedSet.Add("EXECUTE")
+				} else {
+					grantedSet.Add(p)
+				}
+			}
+
+			if !resourcePrivilegesEqual(grantedSet, d) {
+				return d.Set("privileges", grantedSet)
+			}
+			return nil
+		}
+
 		query = `
 SELECT pg_proc.proname, array_remove(array_agg(privilege_type), NULL)
 FROM pg_proc
@@ -438,11 +491,6 @@ GROUP BY pg_class.relname
 		)
 	}
 
-	// This returns, for the specified role (rolname),
-	// the list of all object of the specified type (relkind) in the specified schema (namespace)
-	// with the list of the currently applied privileges (aggregation of privilege_type)
-	//
-	// Our goal is to check that every object has the same privileges as saved in the state.
 	if err != nil {
 		return err
 	}
@@ -450,7 +498,7 @@ GROUP BY pg_class.relname
 
 	for rows.Next() {
 		var objName string
-		var privileges pq.ByteaArray
+		var privileges pq.StringArray
 
 		if err := rows.Scan(&objName, &privileges); err != nil {
 			return err
@@ -462,8 +510,6 @@ GROUP BY pg_class.relname
 
 		privilegesSet := pgArrayToSet(privileges)
 		if !resourcePrivilegesEqual(privilegesSet, d) {
-			// If any object doesn't have the same privileges as saved in the state,
-			// we return its privileges to force an update.
 			log.Printf(
 				"[DEBUG] %s %s has not the expected privileges %v for role %s",
 				strings.ToTitle(objectType), objName, privileges, d.Get("role"),
@@ -582,7 +628,6 @@ func createRevokeQuery(getter ResourceSchemeGetter) string {
 		columns := getter("columns").(*schema.Set)
 		privileges := getter("privileges").(*schema.Set)
 		if privileges.Len() == 0 || columns.Len() == 0 {
-			// No privileges to revoke, so don't revoke anything
 			query = "SELECT NULL"
 		} else {
 			query = fmt.Sprintf(
@@ -598,8 +643,6 @@ func createRevokeQuery(getter ResourceSchemeGetter) string {
 		privileges := getter("privileges").(*schema.Set)
 		if objects.Len() > 0 {
 			if privileges.Len() > 0 {
-				// Revoking specific privileges instead of all privileges
-				// to avoid messing with column level grants
 				query = fmt.Sprintf(
 					"REVOKE %s ON %s %s FROM %s",
 					setToPgIdentSimpleList(privileges),
@@ -661,7 +704,6 @@ func revokeRolePrivileges(db QueryAble, d *schema.ResourceData, usePrevious bool
 
 	query := createRevokeQuery(getter)
 	if len(query) == 0 {
-		// Query is empty, don't run anything
 		return nil
 	}
 	if _, err := db.Exec(query); err != nil {
@@ -671,7 +713,6 @@ func revokeRolePrivileges(db QueryAble, d *schema.ResourceData, usePrevious bool
 }
 
 func checkRoleDBSchemaExists(db *DBConnection, d *schema.ResourceData) (bool, error) {
-	// Check the database exists
 	database := d.Get("database").(string)
 	exists, err := dbExists(db, database)
 	if err != nil {
@@ -682,7 +723,6 @@ func checkRoleDBSchemaExists(db *DBConnection, d *schema.ResourceData) (bool, er
 		return false, nil
 	}
 
-	// Check the role exists
 	role := d.Get("role").(string)
 	if role != publicRole {
 		exists, err := roleExists(db, role)
@@ -695,7 +735,6 @@ func checkRoleDBSchemaExists(db *DBConnection, d *schema.ResourceData) (bool, er
 		}
 	}
 
-	// Check the schema exists (the SQL connection needs to be on the right database)
 	pgSchema := d.Get("schema").(string)
 	if !sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, d.Get("object_type").(string)) && pgSchema != "" {
 		exists, err = schemaExists(db, pgSchema)
@@ -732,9 +771,6 @@ func generateGrantID(d *schema.ResourceData) string {
 }
 
 func getRolesToGrant(db QueryAble, d *schema.ResourceData) ([]string, error) {
-	// If user we use for Terraform is not a superuser (e.g.: in RDS)
-	// we need to grant owner of the schema and owners of tables in the schema
-	// in order to change theirs permissions.
 	owners := []string{}
 	objectType := d.Get("object_type")
 

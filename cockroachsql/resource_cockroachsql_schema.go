@@ -79,7 +79,6 @@ func resourceCockroachSQLSchemaCreate(db *DBConnection, d *schema.ResourceData) 
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	// If the authenticated user is not a superuser (e.g. on AWS RDS)
@@ -164,7 +163,6 @@ func resourceCockroachSQLSchemaDelete(db *DBConnection, d *schema.ResourceData) 
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	schemaName := d.Get(schemaNameAttr).(string)
@@ -221,7 +219,6 @@ func resourceCockroachSQLSchemaExists(db *DBConnection, d *schema.ResourceData) 
 			return false, err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	err = conn.QueryRow("SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.nspname=$1", schemaName).Scan(&schemaName)
@@ -253,7 +250,6 @@ func resourceCockroachSQLSchemaReadImpl(db *DBConnection, d *schema.ResourceData
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	var schemaOwner string
@@ -286,7 +282,6 @@ func resourceCockroachSQLSchemaUpdate(db *DBConnection, d *schema.ResourceData) 
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	if err := setSchemaName(conn, d, databaseName); err != nil {

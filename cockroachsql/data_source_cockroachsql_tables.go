@@ -103,7 +103,6 @@ func dataSourceCockroachSQLTablesRead(db *DBConnection, d *schema.ResourceData) 
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	query := tableQuery

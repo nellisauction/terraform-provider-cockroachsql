@@ -37,8 +37,13 @@ func testAccPreCheck(t *testing.T) {
 		t.Fatal("COCKROACH_USER must be set for acceptance tests")
 	}
 
-	err := testAccProvider.Configure(context.Background(), terraform.NewResourceConfigRaw(nil))
-	if err != nil {
-		t.Fatal(err)
+	config := map[string]any{}
+	if v := os.Getenv("COCKROACH_DATABASE"); v != "" {
+		config["database"] = v
+	}
+
+	diags := testAccProvider.Configure(context.Background(), terraform.NewResourceConfigRaw(config))
+	if diags.HasError() {
+		t.Fatal(diags)
 	}
 }

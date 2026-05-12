@@ -353,7 +353,7 @@ func TestAccCockroachSQLDefaultPrivileges_Routines(t *testing.T) {
 	dbName, roleName := getTestDBNames(dbSuffix)
 
 	resourceConfig := fmt.Sprintf(`
-resource "cockroachsql_default_privileges" "test" {
+resource "cockroachsql_default_privileges" "test_ro" {
 	database          = "%s"
 	schema            = "test_schema"
 	owner             = "%s"

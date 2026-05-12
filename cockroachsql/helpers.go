@@ -105,8 +105,8 @@ func grantRoleMembership(db QueryAble, role, member string) (bool, error) {
 
 	log.Printf("grantRoleMembership: granting %s to %s", role, member)
 
-	sql := fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(member))
-	if _, err := db.Exec(sql); err != nil {
+	stmt := fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(member))
+	if _, err := db.Exec(stmt); err != nil {
 		return false, fmt.Errorf("error granting role %s to %s: %w", role, member, err)
 	}
 	return true, nil
@@ -129,8 +129,8 @@ func revokeRoleMembership(db QueryAble, role, member string) (bool, error) {
 
 	log.Printf("revokeRoleMembership: Revoke %s from %s", role, member)
 
-	sql := fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(member))
-	if _, err := db.Exec(sql); err != nil {
+	stmt := fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(member))
+	if _, err := db.Exec(stmt); err != nil {
 		return false, fmt.Errorf("error revoking role %s from %s: %w", role, member, err)
 	}
 	return true, nil
@@ -237,12 +237,12 @@ func resourcePrivilegesEqual(granted *schema.Set, d *schema.ResourceData) bool {
 	return granted.Equal(wantedSet)
 }
 
-func pgArrayToSet(arr pq.ByteaArray) *schema.Set {
-	s := make([]any, len(arr))
-	for i, v := range arr {
-		s[i] = string(v)
+func pgArrayToSet(arr pq.StringArray) *schema.Set {
+	s := schema.NewSet(schema.HashString, []any{})
+	for _, v := range arr {
+		s.Add(v)
 	}
-	return schema.NewSet(schema.HashString, s)
+	return s
 }
 
 func stringSliceToSet(slice []string) *schema.Set {
@@ -300,26 +300,6 @@ func setToPgIdentSimpleList(idents *schema.Set) string {
 	return strings.Join(quotedIdents, ",")
 }
 
-// startTransaction starts a new DB transaction on the specified database.
-// If the database is specified and different from the one configured in the provider,
-// it will create a new connection pool if needed.
-func startTransaction(client *Client, database string) (*sql.Tx, error) {
-	if database != "" && database != client.databaseName {
-		client = client.config.NewClient(database)
-	}
-	db, err := client.Connect()
-	if err != nil {
-		return nil, err
-	}
-
-	txn, err := db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("could not start transaction: %w", err)
-	}
-
-	return txn, nil
-}
-
 func dbExists(db QueryAble, dbname string) (bool, error) {
 	err := db.QueryRow("SELECT datname FROM pg_database WHERE datname=$1", dbname).Scan(&dbname)
 	switch {
@@ -366,19 +346,6 @@ func getCurrentUser(db QueryAble) (string, error) {
 		return "", fmt.Errorf("error while looking for the current user: %w", err)
 	}
 	return currentUser, nil
-}
-
-// deferredRollback can be used to rollback a transaction in a defer.
-// It will log an error if it fails
-func deferredRollback(txn *sql.Tx) {
-	err := txn.Rollback()
-	switch {
-	case err == sql.ErrTxDone:
-		// transaction has already been committed or rolled back
-		log.Printf("[DEBUG]: %v", err)
-	case err != nil:
-		log.Printf("[ERR] could not rollback transaction: %v", err)
-	}
 }
 
 func getDatabase(d *schema.ResourceData, databaseName string) string {
@@ -445,6 +412,7 @@ func getTablesOwner(db QueryAble, schemaName string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error while looking for owners of tables in schema '%s': %w", schemaName, err)
 	}
+	defer func() { _ = rows.Close() }()
 
 	var owners []string
 	for rows.Next() {
@@ -483,14 +451,10 @@ func getRoleOID(db QueryAble, role string) (uint32, error) {
 
 	var oid uint32
 	if err := db.QueryRow("SELECT oid FROM pg_roles WHERE rolname = $1", role).Scan(&oid); err != nil {
-		return 0, fmt.Errorf("could not find oid for role %s: %w", role, err)
+		return 0, fmt.Errorf("could find oid for role %s: %w", role, err)
 	}
 	return oid, nil
 }
-
-// Lock a role and all his members to avoid concurrent updates on some resources
-
-// Lock a database and all his members to avoid concurrent updates on some resources
 
 func findStringSubmatchMap(expression string, text string) map[string]string {
 

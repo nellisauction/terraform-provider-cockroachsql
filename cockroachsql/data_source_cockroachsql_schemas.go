@@ -87,7 +87,6 @@ func dataSourceCockroachSQLSchemasRead(db *DBConnection, d *schema.ResourceData)
 			return err
 		}
 		conn = targetConn.DB
-		defer func() { _ = targetConn.Close() }()
 	}
 
 	includeSystemSchemas := d.Get("include_system_schemas").(bool)

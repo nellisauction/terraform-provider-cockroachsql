@@ -96,7 +96,7 @@ func TestAccCockroachSQLGrantRole(t *testing.T) {
 	skipIfNotAcc(t)
 
 	config := getTestConfig(t)
-	dsn := config.connStr("cockroachsql")
+	dsn := config.connStr(getTestDatabaseName())
 
 	dbSuffix, teardown := setupTestDatabase(t, false, true)
 	defer teardown()
@@ -110,11 +110,11 @@ func TestAccCockroachSQLGrantRole(t *testing.T) {
 		name = "%s"
 	}
 	resource cockroachsql_grant_role "grant_role" {
-		role              = "%s"
+		role              = "%%s"
 		grant_role        = cockroachsql_role.grant.name
 		with_admin_option = true
 	}
-	`, grantedRoleName, roleName)
+	`, grantedRoleName)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
@@ -124,7 +124,7 @@ func TestAccCockroachSQLGrantRole(t *testing.T) {
 		Providers: testAccProviders,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccCockroachSQLGrantRoleResources,
+				Config: fmt.Sprintf(testAccCockroachSQLGrantRoleResources, roleName),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(
 						"cockroachsql_grant_role.grant_role", "role", roleName),

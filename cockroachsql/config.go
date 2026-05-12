@@ -3,6 +3,7 @@ package cockroachsql
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -242,6 +243,14 @@ func (c *Client) Connect() (*DBConnection, error) {
 		dsn = c.config.connStr(c.databaseName)
 	}
 	conn, found := dbRegistry[dsn]
+	if found {
+		if err := conn.Ping(); err != nil {
+			log.Printf("[DEBUG] cockroachsql: cached connection for %s is dead: %v. Re-opening.", dsn, err)
+			_ = conn.Close()
+			delete(dbRegistry, dsn)
+			found = false
+		}
+	}
 	if !found {
 		db, err := sql.Open(proxyDriverName, dsn)
 		if err != nil {
