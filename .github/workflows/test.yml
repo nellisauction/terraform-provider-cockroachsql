@@ -16,6 +16,9 @@ jobs:
 
     env:
       CRDBVERSION: ${{ matrix.crdbversion }}
+      COCKROACH_HOST: localhost
+      COCKROACH_USER: root
+      COCKROACH_INSECURE: true
       PGPORT: 26257
 
     steps:

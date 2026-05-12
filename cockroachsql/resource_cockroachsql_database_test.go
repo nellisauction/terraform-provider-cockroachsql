@@ -49,11 +49,11 @@ func TestAccCockroachSQLDatabase_Basic(t *testing.T) {
 						"cockroachsql_database.pathological_opts", "is_template", "true"),
 
 					resource.TestCheckResourceAttr(
-						"cockroachsql_database.pg_default_opts", "owner", "myrole"),
+						"cockroachsql_database.crdb_default_opts", "owner", "myrole"),
 					resource.TestCheckResourceAttr(
-						"cockroachsql_database.pg_default_opts", "name", "pg_defaults_db"),
+						"cockroachsql_database.crdb_default_opts", "name", "crdb_defaults_db"),
 					resource.TestCheckResourceAttr(
-						"cockroachsql_database.pg_default_opts", "is_template", "true"),
+						"cockroachsql_database.crdb_default_opts", "is_template", "true"),
 				),
 			},
 		},
@@ -322,8 +322,8 @@ resource "cockroachsql_database" "pathological_opts" {
   is_template = true
 }
 
-resource "cockroachsql_database" "pg_default_opts" {
-  name        = "pg_defaults_db"
+resource "cockroachsql_database" "crdb_default_opts" {
+  name        = "crdb_defaults_db"
   owner       = cockroachsql_role.myrole.name
   template    = "DEFAULT"
   is_template = true

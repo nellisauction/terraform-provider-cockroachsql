@@ -13,6 +13,12 @@ psql -d defaultdb  > /dev/null <<EOS
 EOS
 
 export TF_ACC=true
+export COCKROACH_HOST=localhost
+export COCKROACH_PORT=26257
+export COCKROACH_USER=rds
+export COCKROACH_PASSWORD=rds
+export COCKROACH_INSECURE=true
+export COCKROACH_SUPERUSER=false
 export PGHOST=localhost
 export PGPORT=26257
 export PGUSER=rds

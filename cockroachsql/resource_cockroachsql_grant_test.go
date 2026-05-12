@@ -832,7 +832,7 @@ func TestAccCockroachSQLGrantFunction(t *testing.T) {
 	dsn := config.connStr("cockroachsql")
 
 	// Create a test role and a schema as public has too wide open privileges
-	dbExecute(t, dsn, fmt.Sprintf("CREATE ROLE test_role LOGIN PASSWORD '%s'", testRolePassword))
+	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "CREATE SCHEMA test_schema")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
 	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
@@ -893,7 +893,7 @@ func TestAccCockroachSQLGrantFunctionWithArgs(t *testing.T) {
 	dsn := config.connStr("cockroachsql")
 
 	// Create a test role and a schema as public has too wide open privileges
-	dbExecute(t, dsn, fmt.Sprintf("CREATE ROLE test_role LOGIN PASSWORD '%s'", testRolePassword))
+	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "CREATE SCHEMA test_schema")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
 	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
@@ -950,13 +950,12 @@ resource cockroachsql_grant "test" {
 
 func TestAccCockroachSQLGrantProcedure(t *testing.T) {
 	skipIfNotAcc(t)
-	testCheckCompatibleVersion(t, featureProcedure)
 
 	config := getTestConfig(t)
 	dsn := config.connStr("cockroachsql")
 
 	// Create a test role and a schema as public has too wide open privileges
-	dbExecute(t, dsn, fmt.Sprintf("CREATE ROLE test_role LOGIN PASSWORD '%s'", testRolePassword))
+	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "CREATE SCHEMA test_schema")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
 	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
@@ -990,7 +989,7 @@ resource cockroachsql_grant "test" {
 			resource.Test(t, resource.TestCase{
 				PreCheck: func() {
 					testAccPreCheck(t)
-					testCheckCompatibleVersion(t, featurePrivileges)
+					testCheckCompatibleVersion(t, featureProcedure)
 				},
 				Providers: testAccProviders,
 				Steps: []resource.TestStep{
@@ -1012,13 +1011,12 @@ resource cockroachsql_grant "test" {
 
 func TestAccCockroachSQLGrantRoutine(t *testing.T) {
 	skipIfNotAcc(t)
-	testCheckCompatibleVersion(t, featureRoutine)
 
 	config := getTestConfig(t)
 	dsn := config.connStr("cockroachsql")
 
 	// Create a test role and a schema as public has too wide open privileges
-	dbExecute(t, dsn, fmt.Sprintf("CREATE ROLE test_role LOGIN PASSWORD '%s'", testRolePassword))
+	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "CREATE SCHEMA test_schema")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
 	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
@@ -1058,7 +1056,7 @@ resource cockroachsql_grant "test" {
 			resource.Test(t, resource.TestCase{
 				PreCheck: func() {
 					testAccPreCheck(t)
-					testCheckCompatibleVersion(t, featurePrivileges)
+					testCheckCompatibleVersion(t, featureRoutine)
 				},
 				Providers: testAccProviders,
 				Steps: []resource.TestStep{
