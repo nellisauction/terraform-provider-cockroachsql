@@ -1,0 +1,45 @@
+# This GitHub action can publish assets for release when a tag is created.
+# Currently its setup to run on any tag that matches the pattern "v*" (ie. v0.1.0).
+#
+# This uses an action (paultyng/ghaction-import-gpg) that assumes you set your 
+# private key in the `GPG_PRIVATE_KEY` secret and passphrase in the `PASSPHRASE`
+# secret. If you would rather own your own GPG handling, please fork this action
+# or use an alternative one for key handling.
+#
+# You will need to pass the `--batch` flag to `gpg` in your signing step 
+# in `goreleaser` to indicate this is being used in a non-interactive mode.
+#
+name: release
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  goreleaser:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v6
+      -
+        name: Unshallow
+        run: git fetch --prune --unshallow
+      -
+        name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.8'
+      -
+        name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          FPR=$(gpg --with-colons --fingerprint --list-secret-keys | awk -F: '$1=="fpr"{print $10;exit}')
+          echo "GPG_FINGERPRINT=$FPR" >> $GITHUB_ENV
+      -
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

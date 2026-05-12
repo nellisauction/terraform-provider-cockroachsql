@@ -1,0 +1,26 @@
+name: Golangci-Lint
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+jobs:
+  lint:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.8'
+
+      - run: go mod vendor
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          install-mode: goinstall

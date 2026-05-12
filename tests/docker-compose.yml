@@ -1,0 +1,11 @@
+services:
+    cockroach:
+        image: cockroachdb/cockroach:${CRDBVERSION:-latest-v23.2}
+        command: start-single-node --insecure
+        ports:
+            - 26257:26257
+        healthcheck:
+            test: [ "CMD", "cockroach", "node", "status", "--insecure" ]
+            interval: 5s
+            timeout: 5s
+            retries: 5
