@@ -350,7 +350,7 @@ func resourceCockroachSQLRoleReadImpl(db *DBConnection, d *schema.ResourceData) 
 		"rolname",
 		"rolcreaterole",
 		"rolcanlogin",
-		`CASE WHEN rolvaliduntil IS NULL THEN 'infinity' WHEN rolvaliduntil > '9999-12-31'::TIMESTAMPTZ THEN 'infinity' ELSE rolvaliduntil::TEXT END`,
+		`CASE WHEN rolvaliduntil IS NULL THEN '' WHEN rolvaliduntil > '9999-12-31'::TIMESTAMPTZ THEN 'infinity' ELSE rolvaliduntil::TEXT END`,
 		"rolconfig",
 	}
 
@@ -694,9 +694,7 @@ func setRoleValidUntil(db QueryAble, d *schema.ResourceData) error {
 	}
 
 	validUntil := d.Get(roleValidUntilAttr).(string)
-	if validUntil == "" {
-		return nil
-	} else if strings.ToLower(validUntil) == "infinity" {
+	if validUntil == "" || strings.ToLower(validUntil) == "infinity" {
 		validUntil = "infinity"
 	}
 
