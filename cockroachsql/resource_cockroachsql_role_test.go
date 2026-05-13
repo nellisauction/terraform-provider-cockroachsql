@@ -233,7 +233,11 @@ func checkSearchPath(client *Client, roleName string, expectedSearchPath []strin
 	}
 
 	var roleConfig pq.StringArray
-	err = db.QueryRow("SELECT rolconfig FROM pg_catalog.pg_roles WHERE rolname=$1", roleName).Scan(&roleConfig)
+	err = db.QueryRow(`
+		SELECT COALESCE(s.setconfig, rolconfig)
+		FROM pg_catalog.pg_roles
+		LEFT JOIN pg_catalog.pg_db_role_setting s ON pg_roles.oid = s.setrole AND s.setdatabase = 0
+		WHERE rolname=$1`, roleName).Scan(&roleConfig)
 	if err != nil {
 		return fmt.Errorf("error reading role config: %v", err)
 	}

@@ -377,7 +377,7 @@ func resourceCockroachSQLRoleReadImpl(db *DBConnection, d *schema.ResourceData) 
 		"rolcreaterole",
 		"rolcanlogin",
 		`CASE WHEN rolvaliduntil IS NULL THEN '' WHEN rolvaliduntil > '9999-12-31'::TIMESTAMPTZ THEN 'infinity' ELSE rolvaliduntil::TEXT END`,
-		"rolconfig",
+		"COALESCE(s.setconfig, rolconfig)",
 	}
 
 	values := []any{
@@ -392,7 +392,9 @@ func resourceCockroachSQLRoleReadImpl(db *DBConnection, d *schema.ResourceData) 
 	roleSQL := fmt.Sprintf(`SELECT ARRAY(
 			SELECT pg_get_userbyid(roleid) FROM pg_catalog.pg_auth_members members WHERE member = pg_roles.oid
 		), %s
-		FROM pg_catalog.pg_roles WHERE rolname=$1`,
+		FROM pg_catalog.pg_roles
+		LEFT JOIN pg_catalog.pg_db_role_setting s ON pg_roles.oid = s.setrole AND s.setdatabase = 0
+		WHERE rolname=$1`,
 		strings.Join(columns, ", "),
 	)
 	err := db.QueryRow(roleSQL, roleID).Scan(values...)
