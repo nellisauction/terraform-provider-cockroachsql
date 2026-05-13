@@ -47,10 +47,10 @@ jobs:
 
       - name: Run tests in dev container
         uses: devcontainers/ci@v0.3
+        env:
+          CRDBVERSION: ${{ matrix.crdbversion }}
         with:
           push: never
-          env: |
-            CRDBVERSION=${{ matrix.crdbversion }}
           runCmd: |
             make test
             make vet

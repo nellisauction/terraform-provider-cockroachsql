@@ -21,8 +21,8 @@
     }
   },
   "postCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
-  "postStartCommand": "psql 'postgresql://root@cockroachdb:26257/defaultdb?sslmode=disable' -c 'CREATE DATABASE IF NOT EXISTS tf_tests;'",
-  "remoteEnv": {
+  "postStartCommand": "PGCLIENTENCODING=utf8 psql 'postgresql://root@cockroachdb:26257/defaultdb?sslmode=disable' -c 'DROP DATABASE IF EXISTS tf_tests; CREATE DATABASE tf_tests;'",
+  "containerEnv": {
     "TF_ACC": "true",
     "COCKROACH_HOST": "cockroachdb",
     "COCKROACH_PORT": "26257",
