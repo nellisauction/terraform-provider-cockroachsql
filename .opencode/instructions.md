@@ -22,7 +22,7 @@ This provider was forked from the PostgreSQL provider but heavily modified. Cock
 ## 4. Test Infrastructure
 - **Ephemeral Databases**: **Never modify `defaultdb`** during acceptance tests. Use the provided environment variable `COCKROACH_DATABASE` (e.g., `tf_tests`) to scope the creation of test databases/roles.
 - **Containerization**: Both local development and CI use the `.devcontainer/` setup exclusively. The devcontainer's `docker-compose.yml` starts a `cockroachdb` service, and `postStartCommand` in `devcontainer.json` creates the `tf_tests` database on startup. Do NOT write custom scripts to start Docker Compose or create the database manually.
-- **Unit vs Acceptance Tests**: `make test` runs all Go tests. Acceptance tests require a running database and are executed via `make testacc` (which runs `go test -v ./cockroachsql -timeout 120m`).
+- **Unit vs Acceptance Tests**: `make test` runs only non-acceptance unit tests (uses `-run "^Test[^A]"` with a 30s timeout). This keeps it fast and safe even when `TF_ACC=true` is set in the environment. Acceptance tests (`TestAcc*`) require a running database and are executed via `make testacc` (which runs `go test -v ./cockroachsql -timeout 120m`).
 - **CI**: GitHub Actions uses `devcontainers/ci@v0.3` to run all tests inside the devcontainer. A `build-devcontainer` job pre-warms the Blacksmith Docker layer cache before the 9-version CockroachDB matrix fans out. The matrix version is passed to the devcontainer via the `CRDBVERSION` env var, which `.devcontainer/docker-compose.yml` uses to select the CockroachDB image (`${CRDBVERSION:-latest-v24.1}`).
 
 ## 5. Environment Variables
