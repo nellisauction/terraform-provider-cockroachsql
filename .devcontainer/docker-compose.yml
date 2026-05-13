@@ -1,0 +1,22 @@
+services:
+  devcontainer:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+    depends_on:
+      cockroachdb:
+        condition: service_healthy
+
+  cockroachdb:
+    image: cockroachdb/cockroach:latest-v24.1
+    command: start-single-node --insecure
+    ports:
+      - "26257:26257"
+    healthcheck:
+      test: ["CMD", "cockroach", "node", "status", "--insecure"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    tmpfs:
+      - /cockroach/cockroach-data

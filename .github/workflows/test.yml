@@ -14,12 +14,24 @@ jobs:
       matrix:
         crdbversion: [latest-v26.1, latest-v25.4, latest-v25.3, latest-v25.2, latest-v25.1, latest-v24.3, latest-v24.2, latest-v24.1, latest-v23.2]
 
+    services:
+      cockroachdb:
+        image: cockroachdb/cockroach:${{ matrix.crdbversion }}
+        ports:
+          - 26257:26257
+        options: >-
+          --health-cmd "cockroach node status --insecure"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     env:
-      CRDBVERSION: ${{ matrix.crdbversion }}
+      TF_ACC: "true"
       COCKROACH_HOST: localhost
+      COCKROACH_PORT: "26257"
       COCKROACH_USER: root
-      COCKROACH_INSECURE: true
-      PGPORT: 26257
+      COCKROACH_DATABASE: tf_tests
+      COCKROACH_INSECURE: "true"
 
     steps:
       - name: Checkout
@@ -30,6 +42,11 @@ jobs:
         with:
           go-version: '1.25.8'
 
+      - name: Create test database
+        run: |
+          docker exec $(docker ps -q --filter ancestor=cockroachdb/cockroach:${{ matrix.crdbversion }}) \
+            ./cockroach sql --insecure -e "CREATE DATABASE IF NOT EXISTS tf_tests;"
+
       - name: test
         run: make test
 
@@ -37,4 +54,4 @@ jobs:
         run: make vet
 
       - name: testacc
-        run: make testacc
+        run: go test -v ./cockroachsql -timeout 120m

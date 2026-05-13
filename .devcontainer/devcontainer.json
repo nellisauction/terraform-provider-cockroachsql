@@ -1,0 +1,32 @@
+{
+  "name": "cockroachsql provider",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspace",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.25"
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go"
+      ],
+      "settings": {
+        "go.toolsManagement.checkForUpdates": "off",
+        "go.useLanguageServer": true
+      }
+    }
+  },
+  "postCreateCommand": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
+  "remoteEnv": {
+    "TF_ACC": "true",
+    "COCKROACH_HOST": "cockroachdb",
+    "COCKROACH_PORT": "26257",
+    "COCKROACH_USER": "root",
+    "COCKROACH_DATABASE": "tf_tests",
+    "COCKROACH_INSECURE": "true"
+  }
+}

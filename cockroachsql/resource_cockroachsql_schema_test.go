@@ -173,7 +173,10 @@ func testAccCheckCockroachSQLSchemaExistsWithDatabase(n, schemaName, dbName stri
 		if dbName == "" {
 			dbName = getTestDatabaseName()
 		}
-		db, err := client.Connect()
+
+		// Use a dedicated connection for the specific database
+		targetClient := client.config.NewClient(dbName)
+		db, err := targetClient.Connect()
 		if err != nil {
 			return err
 		}
@@ -182,7 +185,7 @@ func testAccCheckCockroachSQLSchemaExistsWithDatabase(n, schemaName, dbName stri
 		err = db.QueryRow("SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname=$1", schemaName).Scan(&_rez)
 
 		if err != nil {
-			return fmt.Errorf("error reading info about schema: %s", err)
+			return fmt.Errorf("error reading info about schema %s in db %s: %s", schemaName, dbName, err)
 		}
 
 		return nil
