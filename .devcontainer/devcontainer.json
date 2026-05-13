@@ -20,8 +20,8 @@
       }
     }
   },
-  "postCreateCommand": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
-  "postStartCommand": "cockroach sql --insecure --host=cockroachdb -e 'CREATE DATABASE IF NOT EXISTS tf_tests;'",
+  "postCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
+  "postStartCommand": "psql 'postgresql://root@cockroachdb:26257/defaultdb?sslmode=disable' -c 'CREATE DATABASE IF NOT EXISTS tf_tests;'",
   "remoteEnv": {
     "TF_ACC": "true",
     "COCKROACH_HOST": "cockroachdb",
