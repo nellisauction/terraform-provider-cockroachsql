@@ -289,7 +289,10 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 			r_obj_type := strings.ToUpper(m["object_type"])
 			r_schema := m["schema_name"]
 			r_db := m["database_name"]
-			r_name := m["name"]
+			r_name := m["object_name"] // CockroachDB uses object_name
+			if r_name == "" {
+				r_name = m["name"] // fallback for other potential column names
+			}
 			if r_name == "" {
 				r_name = m["table_name"]
 			}
@@ -358,12 +361,21 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 					norm := func(s string) string {
 						s = strings.ToLower(strings.ReplaceAll(s, " ", ""))
 						s = strings.ReplaceAll(s, "character", "char")
+						s = strings.ReplaceAll(s, "bpchar", "char")
 						s = strings.ReplaceAll(s, "varying", "")
 						s = strings.ReplaceAll(s, "integer", "int")
 						s = strings.ReplaceAll(s, "boolean", "bool")
 						return s
 					}
-					if norm(k) == norm(objName) {
+					normK := norm(k)
+					normObj := norm(objName)
+					// CockroachDB returns no-argument functions as "func_name()" but
+					// the Terraform config stores them as "func_name" (no parens).
+					// Strip trailing "()" from the DB name when the config has no parens.
+					if !strings.Contains(normObj, "(") {
+						normK = strings.TrimSuffix(normK, "()")
+					}
+					if normK == normObj {
 						foundSet = v
 						break
 					}

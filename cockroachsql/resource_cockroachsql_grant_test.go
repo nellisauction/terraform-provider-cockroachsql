@@ -272,6 +272,11 @@ func TestAccCockroachSQLImplicitGrants(t *testing.T) {
 
 	dbName, roleName := getTestDBNames(dbSuffix)
 
+	// GRANT SELECT ON ALL TABLES IN SCHEMA only produces rows in SHOW GRANTS when
+	// the schema contains at least one table; create one so the read-back is non-empty.
+	dropTable := createTestTables(t, dbSuffix, []string{"test_schema.implicit_test_table"}, "")
+	defer dropTable()
+
 	var tfConfig = fmt.Sprintf(`
 	resource "cockroachsql_grant" "test" {
 		database    = "%%s"

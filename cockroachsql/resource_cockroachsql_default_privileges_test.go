@@ -366,7 +366,8 @@ resource "cockroachsql_default_privileges" "test_ro" {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccPreCheck(t)
-			testCheckCompatibleVersion(t, featurePrivileges)
+			// ROUTINE object type in ALTER DEFAULT PRIVILEGES is not supported by CockroachDB.
+			testCheckCompatibleVersion(t, featureRoutine)
 		},
 		Providers: testAccProviders,
 		Steps: []resource.TestStep{
