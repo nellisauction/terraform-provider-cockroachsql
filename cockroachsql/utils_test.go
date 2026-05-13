@@ -137,11 +137,14 @@ func setupTestDatabase(t *testing.T, createDB, createRole bool) (string, func())
 
 	if createDB {
 		dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf("CREATE DATABASE %s", dbName))
-		// Create a test schema in this new database and grant usage to rolName
+		// Create a test schema in this new database
 		dbExecute(t, config.connStr(dbName), "CREATE SCHEMA IF NOT EXISTS test_schema")
-		dbExecute(t, config.connStr(dbName), fmt.Sprintf("GRANT usage ON SCHEMA test_schema to %s", roleName))
 		dbExecute(t, config.connStr(dbName), "CREATE SCHEMA IF NOT EXISTS dev_schema")
-		dbExecute(t, config.connStr(dbName), fmt.Sprintf("GRANT usage ON SCHEMA dev_schema to %s", roleName))
+
+		if createRole {
+			dbExecute(t, config.connStr(dbName), fmt.Sprintf("GRANT usage ON SCHEMA test_schema to %s", roleName))
+			dbExecute(t, config.connStr(dbName), fmt.Sprintf("GRANT usage ON SCHEMA dev_schema to %s", roleName))
+		}
 	}
 
 	return suffix, func() {

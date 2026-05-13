@@ -217,6 +217,7 @@ func resourcePrivilegesEqual(granted *schema.Set, d *schema.ResourceData) bool {
 	objectType := d.Get("object_type").(string)
 	wanted := d.Get("privileges").(*schema.Set)
 
+	log.Printf("[DEBUG] cockroachsql: comparing granted=%v wanted=%v", granted.List(), wanted.List())
 	if granted.Equal(wanted) {
 		return true
 	}
@@ -443,18 +444,6 @@ func resolveOwners(db QueryAble, owners []string) ([]string, error) {
 }
 
 const publicRole = "public"
-
-func getRoleOID(db QueryAble, role string) (uint32, error) {
-	if role == publicRole {
-		return 0, nil
-	}
-
-	var oid uint32
-	if err := db.QueryRow("SELECT oid FROM pg_roles WHERE rolname = $1", role).Scan(&oid); err != nil {
-		return 0, fmt.Errorf("could find oid for role %s: %w", role, err)
-	}
-	return oid, nil
-}
 
 func findStringSubmatchMap(expression string, text string) map[string]string {
 

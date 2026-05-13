@@ -166,6 +166,11 @@ func resourceCockroachSQLSchemaDelete(db *DBConnection, d *schema.ResourceData) 
 	}
 
 	schemaName := d.Get(schemaNameAttr).(string)
+	if schemaName == "public" {
+		log.Printf("[WARN] CockroachSQL schema 'public' will not be dropped.")
+		d.SetId("")
+		return nil
+	}
 
 	exists, err := schemaExists(conn, schemaName)
 	if err != nil {

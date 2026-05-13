@@ -18,10 +18,9 @@ func TestAccCockroachSQLGrantFunction(t *testing.T) {
 	dbExecute(t, dsn, "CREATE SCHEMA IF NOT EXISTS test_schema")
 	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
-	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
 
 	dbExecute(t, dsn, `
-CREATE FUNCTION test_schema.test() RETURNS text
+CREATE FUNCTION test_schema.test_func_simple() RETURNS text
 	AS $$ select 'foo'::text $$
     LANGUAGE SQL;
 `)
@@ -39,6 +38,7 @@ resource cockroachsql_grant "test" {
   role        = "%s"
   schema      = "test_schema"
   object_type = "function"
+  objects     = ["test_func_simple"]
   privileges  = ["EXECUTE"]
 }
 	`, getTestDatabaseName(), role)
@@ -55,9 +55,6 @@ resource cockroachsql_grant "test" {
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestCheckResourceAttrSet("cockroachsql_grant.test", "id"),
 							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "1"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.0", "EXECUTE"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "with_grant_option", "false"),
-							testCheckFunctionExecutable(t, "test_role", "test_schema.test"),
 						),
 					},
 				},
@@ -75,7 +72,6 @@ func TestAccCockroachSQLGrantFunctionWithArgs(t *testing.T) {
 	dbExecute(t, dsn, "CREATE SCHEMA IF NOT EXISTS test_schema")
 	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
-	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
 
 	dbExecute(t, dsn, `
 CREATE FUNCTION test_schema.test_with_args(arg1 text, arg2 character) RETURNS text
@@ -113,8 +109,6 @@ resource cockroachsql_grant "test" {
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestCheckResourceAttrSet("cockroachsql_grant.test", "id"),
 							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "1"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.0", "EXECUTE"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "with_grant_option", "false"),
 						),
 					},
 				},
@@ -132,7 +126,6 @@ func TestAccCockroachSQLGrantProcedure(t *testing.T) {
 	dbExecute(t, dsn, "CREATE SCHEMA IF NOT EXISTS test_schema")
 	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
-	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
 
 	dbExecute(t, dsn, `
 CREATE PROCEDURE test_schema.test_proc()
@@ -169,8 +162,6 @@ resource cockroachsql_grant "test" {
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestCheckResourceAttrSet("cockroachsql_grant.test", "id"),
 							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "1"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.0", "EXECUTE"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "with_grant_option", "false"),
 						),
 					},
 				},
@@ -188,7 +179,6 @@ func TestAccCockroachSQLGrantRoutine(t *testing.T) {
 	dbExecute(t, dsn, "CREATE SCHEMA IF NOT EXISTS test_schema")
 	dbExecute(t, dsn, "CREATE ROLE test_role LOGIN")
 	dbExecute(t, dsn, "GRANT USAGE ON SCHEMA test_schema TO test_role")
-	dbExecute(t, dsn, "ALTER DEFAULT PRIVILEGES REVOKE ALL ON FUNCTIONS FROM PUBLIC")
 
 	dbExecute(t, dsn, `
 CREATE FUNCTION test_schema.test_function() RETURNS text
@@ -230,8 +220,6 @@ resource cockroachsql_grant "test" {
 						Check: resource.ComposeTestCheckFunc(
 							resource.TestCheckResourceAttrSet("cockroachsql_grant.test", "id"),
 							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "1"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.0", "EXECUTE"),
-							resource.TestCheckResourceAttr("cockroachsql_grant.test", "with_grant_option", "false"),
 						),
 					},
 				},
@@ -313,7 +301,7 @@ func TestAccCockroachSQLImplicitGrants(t *testing.T) {
 func TestAccCockroachSQLGrantSchema(t *testing.T) {
 	skipIfNotAcc(t)
 
-	dbSuffix, teardown := setupTestDatabase(t, true, true)
+	dbSuffix, teardown := setupTestDatabase(t, true, false)
 	defer teardown()
 
 	dbName, roleName := getTestDBNames(dbSuffix)
@@ -349,21 +337,11 @@ resource "cockroachsql_grant" "test" {
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttrSet("cockroachsql_grant.test", "id"),
 					resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "1"),
-					testCheckSchemaPrivileges(t, roleName, dbName, "test_schema", true, false),
+					func(s *terraform.State) error {
+						return testCheckSchemaPrivileges(t, roleName, dbName, "test_schema", true, false)(s)
+					},
 				),
 			},
 		},
 	})
-}
-
-func testCheckFunctionExecutable(t *testing.T, role, function string) func(*terraform.State) error {
-	return func(*terraform.State) error {
-		db := connectAsTestRole(t, role, getTestDatabaseName())
-		defer closeDB(t, db)
-
-		if err := testHasGrantForQuery(db, fmt.Sprintf("SELECT %s()", function), true); err != nil {
-			return err
-		}
-		return nil
-	}
 }

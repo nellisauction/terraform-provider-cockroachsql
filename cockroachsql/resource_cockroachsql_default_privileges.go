@@ -3,6 +3,7 @@ package cockroachsql
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -88,6 +89,7 @@ func resourceCockroachSQLDefaultPrivileges() *schema.Resource {
 func resourceCockroachSQLDefaultPrivilegesRead(db *DBConnection, d *schema.ResourceData) error {
 	pgSchema := d.Get("schema").(string)
 	objectType := d.Get("object_type").(string)
+	database := d.Get("database").(string)
 
 	if pgSchema != "" && objectType == "schema" && !db.featureSupported(featurePrivilegesOnSchemas) {
 		return fmt.Errorf(
@@ -103,16 +105,19 @@ func resourceCockroachSQLDefaultPrivilegesRead(db *DBConnection, d *schema.Resou
 		)
 	}
 
-	exists, err := checkRoleDBSchemaExists(db, d)
+	// Connect to the target database
+	targetClient := db.client.config.NewClient(database)
+	targetConn, err := targetClient.Connect()
 	if err != nil {
+		// If DB doesn't exist, the resource doesn't exist
+		if strings.Contains(err.Error(), "does not exist") {
+			d.SetId("")
+			return nil
+		}
 		return err
 	}
-	if !exists {
-		d.SetId("")
-		return nil
-	}
 
-	return readRoleDefaultPrivileges(db, d)
+	return readRoleDefaultPrivileges(targetConn.DB, d)
 }
 
 func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.ResourceData) error {
@@ -120,6 +125,7 @@ func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.Res
 	objectType := d.Get("object_type").(string)
 	forAllRoles := d.Get("for_all_roles").(bool)
 	owner := d.Get("owner").(string)
+	database := d.Get("database").(string)
 
 	if !forAllRoles && owner == "" {
 		return fmt.Errorf("must specify either `owner` or `for_all_roles = true`")
@@ -150,20 +156,31 @@ func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.Res
 		return err
 	}
 
+	// Connect to the target database
+	conn := db.DB
+	if database != db.client.databaseName {
+		targetClient := db.client.config.NewClient(database)
+		targetConn, err := targetClient.Connect()
+		if err != nil {
+			return err
+		}
+		conn = targetConn.DB
+	}
+
 	rolesToGrant := []string{}
 	if !forAllRoles {
 		rolesToGrant = append(rolesToGrant, owner)
 	}
 
 	// Needed in order to set the owner of the db if the connection user is not a superuser
-	if err := withRolesGranted(db, rolesToGrant, func() error {
+	if err := withRolesGranted(conn, rolesToGrant, func() error {
 
 		// Revoke all privileges before granting otherwise reducing privileges will not work.
-		if err := revokeRoleDefaultPrivileges(db, d); err != nil {
+		if err := revokeRoleDefaultPrivileges(conn, d); err != nil {
 			return err
 		}
 
-		if err := grantRoleDefaultPrivileges(db, d); err != nil {
+		if err := grantRoleDefaultPrivileges(conn, d); err != nil {
 			return err
 		}
 		return nil
@@ -173,7 +190,7 @@ func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.Res
 
 	d.SetId(generateDefaultPrivilegesID(d))
 
-	return readRoleDefaultPrivileges(db, d)
+	return readRoleDefaultPrivileges(conn, d)
 }
 
 func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.ResourceData) error {
@@ -181,6 +198,7 @@ func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.Res
 	owner := d.Get("owner").(string)
 	pgSchema := d.Get("schema").(string)
 	objectType := d.Get("object_type").(string)
+	database := d.Get("database").(string)
 
 	if pgSchema != "" && objectType == "schema" && !db.featureSupported(featurePrivilegesOnSchemas) {
 		return fmt.Errorf(
@@ -189,14 +207,25 @@ func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.Res
 		)
 	}
 
+	// Connect to the target database
+	conn := db.DB
+	if database != db.client.databaseName {
+		targetClient := db.client.config.NewClient(database)
+		targetConn, err := targetClient.Connect()
+		if err != nil {
+			return err
+		}
+		conn = targetConn.DB
+	}
+
 	rolesToGrant := []string{}
 	if !forAllRoles {
 		rolesToGrant = append(rolesToGrant, owner)
 	}
 
 	// Needed in order to set the owner of the db if the connection user is not a superuser
-	if err := withRolesGranted(db, rolesToGrant, func() error {
-		return revokeRoleDefaultPrivileges(db, d)
+	if err := withRolesGranted(conn, rolesToGrant, func() error {
+		return revokeRoleDefaultPrivileges(conn, d)
 	}); err != nil {
 		return err
 	}
@@ -231,9 +260,8 @@ func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Use a flexible scan to handle different CockroachDB versions that may return
-	// different numbers of columns (e.g., adding 'is_grantable' or 'schema_name').
 	cols, _ := rows.Columns()
+	log.Printf("[DEBUG] cockroachsql_default_privileges: found columns %v", cols)
 	var privileges []string
 	for rows.Next() {
 		dest := make([]any, len(cols))
@@ -253,6 +281,8 @@ func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 			}
 		}
 
+		log.Printf("[DEBUG] cockroachsql_default_privileges: row: %v", m)
+
 		r_object_type := m["object_type"]
 		r_grantee := m["grantee"]
 		r_privilege_type := m["privilege_type"]
@@ -269,7 +299,7 @@ func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 			targetPlural = objectType + "s"
 		}
 
-		if strings.EqualFold(r_object_type, targetPlural) && strings.EqualFold(r_grantee, role) {
+		if strings.EqualFold(r_object_type, targetPlural) && strings.EqualFold(strings.Trim(r_grantee, `"`), strings.Trim(role, `"`)) {
 			privileges = append(privileges, strings.ToUpper(r_privilege_type))
 		}
 	}
