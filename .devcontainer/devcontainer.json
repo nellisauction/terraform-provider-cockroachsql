@@ -21,6 +21,7 @@
     }
   },
   "postCreateCommand": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest",
+  "postStartCommand": "cockroach sql --insecure --host=cockroachdb -e 'CREATE DATABASE IF NOT EXISTS tf_tests;'",
   "remoteEnv": {
     "TF_ACC": "true",
     "COCKROACH_HOST": "cockroachdb",

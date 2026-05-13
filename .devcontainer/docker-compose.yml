@@ -9,7 +9,7 @@ services:
         condition: service_healthy
 
   cockroachdb:
-    image: cockroachdb/cockroach:latest-v24.1
+    image: cockroachdb/cockroach:${CRDBVERSION:-latest-v24.1}
     command: start-single-node --insecure
     ports:
       - "26257:26257"
