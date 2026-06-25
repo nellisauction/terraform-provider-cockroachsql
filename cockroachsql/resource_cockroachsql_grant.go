@@ -273,7 +273,11 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 	if err != nil {
 		return err
 	}
-	cols, _ := rows.Columns()
+	cols, err := rows.Columns()
+	if err != nil {
+		_ = rows.Close()
+		return err
+	}
 	for rows.Next() {
 		dest := make([]any, len(cols))
 		vals := make([]sql.NullString, len(cols))
@@ -354,7 +358,13 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 			objectGrants[clean_r_name].Add(r_privilege)
 		}
 	}
-	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
 
 	grantedSet := schema.NewSet(schema.HashString, []any{})
 	if objects.Len() > 0 {
