@@ -259,92 +259,102 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 
 	allPrivs := allowedPrivileges[d.Get("object_type").(string)]
 
-	grantees := []string{role, "public"}
-	for _, granteeName := range grantees {
-		query := fmt.Sprintf("SHOW GRANTS FOR %s", pq.QuoteIdentifier(granteeName))
-		rows, err := db.Query(query)
-		if err != nil {
+	// Only query grants for the role this resource manages. CockroachDB's
+	// built-in `public` role is implicitly granted to every user (e.g.
+	// CONNECT/TEMPORARY on every database, USAGE/CREATE on the `public`
+	// schema). Reading public's rows and merging them into the named role's
+	// privilege set caused permanent drift on every refresh, since those
+	// implicit privileges can never be revoked from the named role.
+	//
+	// If the managed resource is itself the `public` role, we obviously do
+	// need to read public's grants.
+	query := fmt.Sprintf("SHOW GRANTS FOR %s", pq.QuoteIdentifier(role))
+	rows, err := db.Query(query)
+	if err != nil {
+		return err
+	}
+	cols, _ := rows.Columns()
+	for rows.Next() {
+		dest := make([]any, len(cols))
+		vals := make([]sql.NullString, len(cols))
+		for i := range dest {
+			dest[i] = &vals[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		m := make(map[string]string)
+		for i, colName := range cols {
+			if vals[i].Valid {
+				m[colName] = vals[i].String
+			}
+		}
+
+		r_grantee := m["grantee"]
+		r_privilege := strings.ToUpper(m["privilege_type"])
+		r_obj_type := strings.ToUpper(m["object_type"])
+		r_schema := m["schema_name"]
+		r_db := m["database_name"]
+		r_name := m["object_name"] // CockroachDB uses object_name
+		if r_name == "" {
+			r_name = m["name"] // fallback for other potential column names
+		}
+		if r_name == "" {
+			r_name = m["table_name"]
+		}
+		if r_name == "" {
+			r_name = m["routine_signature"]
+		}
+
+		// SHOW GRANTS FOR <role> can return rows whose grantee differs from
+		// the queried role (e.g. when the role has inherited rows). Only
+		// keep rows that were granted directly to the role this resource
+		// manages.
+		if !strings.EqualFold(strings.Trim(r_grantee, `"`), strings.Trim(role, `"`)) {
 			continue
 		}
-		cols, _ := rows.Columns()
-		for rows.Next() {
-			dest := make([]any, len(cols))
-			vals := make([]sql.NullString, len(cols))
-			for i := range dest {
-				dest[i] = &vals[i]
-			}
-			if err := rows.Scan(dest...); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			m := make(map[string]string)
-			for i, colName := range cols {
-				if vals[i].Valid {
-					m[colName] = vals[i].String
-				}
-			}
-
-			r_grantee := m["grantee"]
-			r_privilege := strings.ToUpper(m["privilege_type"])
-			r_obj_type := strings.ToUpper(m["object_type"])
-			r_schema := m["schema_name"]
-			r_db := m["database_name"]
-			r_name := m["object_name"] // CockroachDB uses object_name
-			if r_name == "" {
-				r_name = m["name"] // fallback for other potential column names
-			}
-			if r_name == "" {
-				r_name = m["table_name"]
-			}
-			if r_name == "" {
-				r_name = m["routine_signature"]
-			}
-
-			if !strings.EqualFold(strings.Trim(r_grantee, `"`), strings.Trim(granteeName, `"`)) {
-				continue
-			}
-			if database != "" && r_db != "" && !strings.EqualFold(r_db, database) {
-				continue
-			}
-
-			matchType := false
-			switch objectType {
-			case "TABLE":
-				matchType = (r_obj_type == "TABLE" || r_obj_type == "TABLES")
-			case "SCHEMA":
-				matchType = (r_obj_type == "SCHEMA" || r_obj_type == "SCHEMAS")
-			case "DATABASE":
-				matchType = (r_obj_type == "DATABASE" || r_obj_type == "DATABASES")
-			case "FUNCTION", "PROCEDURE", "ROUTINE":
-				matchType = (r_obj_type == "FUNCTION" || r_obj_type == "FUNCTIONS" || r_obj_type == "ROUTINE" || r_obj_type == "ROUTINES")
-			case "SEQUENCE":
-				matchType = (r_obj_type == "SEQUENCE" || r_obj_type == "SEQUENCES")
-			default:
-				matchType = strings.HasPrefix(r_obj_type, objectType)
-			}
-			if !matchType {
-				continue
-			}
-			if schemaName != "" && r_schema != "" && !strings.EqualFold(r_schema, schemaName) {
-				continue
-			}
-
-			clean_r_name := strings.Trim(r_name, `"`)
-			if _, ok := objectGrants[clean_r_name]; !ok {
-				objectGrants[clean_r_name] = schema.NewSet(schema.HashString, []any{})
-			}
-			if r_privilege == "ALL" {
-				for _, p := range allPrivs {
-					if p != "ALL" {
-						objectGrants[clean_r_name].Add(p)
-					}
-				}
-			} else {
-				objectGrants[clean_r_name].Add(r_privilege)
-			}
+		if database != "" && r_db != "" && !strings.EqualFold(r_db, database) {
+			continue
 		}
-		_ = rows.Close()
+
+		matchType := false
+		switch objectType {
+		case "TABLE":
+			matchType = (r_obj_type == "TABLE" || r_obj_type == "TABLES")
+		case "SCHEMA":
+			matchType = (r_obj_type == "SCHEMA" || r_obj_type == "SCHEMAS")
+		case "DATABASE":
+			matchType = (r_obj_type == "DATABASE" || r_obj_type == "DATABASES")
+		case "FUNCTION", "PROCEDURE", "ROUTINE":
+			matchType = (r_obj_type == "FUNCTION" || r_obj_type == "FUNCTIONS" || r_obj_type == "ROUTINE" || r_obj_type == "ROUTINES")
+		case "SEQUENCE":
+			matchType = (r_obj_type == "SEQUENCE" || r_obj_type == "SEQUENCES")
+		default:
+			matchType = strings.HasPrefix(r_obj_type, objectType)
+		}
+		if !matchType {
+			continue
+		}
+		if schemaName != "" && r_schema != "" && !strings.EqualFold(r_schema, schemaName) {
+			continue
+		}
+
+		clean_r_name := strings.Trim(r_name, `"`)
+		if _, ok := objectGrants[clean_r_name]; !ok {
+			objectGrants[clean_r_name] = schema.NewSet(schema.HashString, []any{})
+		}
+		if r_privilege == "ALL" {
+			for _, p := range allPrivs {
+				if p != "ALL" {
+					objectGrants[clean_r_name].Add(p)
+				}
+			}
+		} else {
+			objectGrants[clean_r_name].Add(r_privilege)
+		}
 	}
+	_ = rows.Close()
 
 	grantedSet := schema.NewSet(schema.HashString, []any{})
 	if objects.Len() > 0 {
@@ -393,19 +403,20 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 			}
 		}
 	} else if len(allRelevantObjects) > 0 {
-		first := true
+		// "GRANT ... ON ALL <type>S IN SCHEMA <s>" applies the listed
+		// privileges to every existing object plus future ones via the
+		// default_privileges machinery. When checking drift we therefore
+		// report the union of privileges seen on any relevant object: if
+		// any object is missing a grant row (e.g. it was created after
+		// the GRANT and no default privilege covers it yet) the
+		// intersection-based check would always collapse to empty and the
+		// resource would flap forever.
 		for objName := range allRelevantObjects {
 			foundSet := objectGrants[objName]
 			if foundSet == nil {
-				grantedSet = schema.NewSet(schema.HashString, []any{})
-				break
+				continue
 			}
-			if first {
-				grantedSet = foundSet
-				first = false
-			} else {
-				grantedSet = grantedSet.Intersection(foundSet)
-			}
+			grantedSet = grantedSet.Union(foundSet)
 		}
 	} else {
 		for _, v := range objectGrants {
