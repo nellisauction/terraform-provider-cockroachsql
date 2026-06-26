@@ -254,17 +254,30 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 			objQuery = fmt.Sprintf("SELECT routine_name FROM information_schema.routines WHERE routine_schema = %s", pq.QuoteLiteral(schemaName))
 		}
 		if objQuery != "" {
+			// Surface lookup errors instead of swallowing them. Treating a
+			// failed information_schema query the same as "schema has zero
+			// objects" would cause the empty-schema branch below to silently
+			// preserve stale state and hide real drift.
 			objRows, err := db.Query(objQuery)
-			if err == nil {
-				defer func() { _ = objRows.Close() }()
-				for objRows.Next() {
-					var name string
-					if err := objRows.Scan(&name); err == nil {
-						if !strings.HasPrefix(name, "crdb_internal") {
-							allRelevantObjects[name] = true
-						}
-					}
+			if err != nil {
+				return err
+			}
+			for objRows.Next() {
+				var name string
+				if err := objRows.Scan(&name); err != nil {
+					_ = objRows.Close()
+					return err
 				}
+				if !strings.HasPrefix(name, "crdb_internal") {
+					allRelevantObjects[name] = true
+				}
+			}
+			if err := objRows.Err(); err != nil {
+				_ = objRows.Close()
+				return err
+			}
+			if err := objRows.Close(); err != nil {
+				return err
 			}
 		}
 	}
