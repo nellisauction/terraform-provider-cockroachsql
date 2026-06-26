@@ -446,14 +446,14 @@ resource "cockroachsql_grant" "test" {
 	})
 }
 
-// TestAccCockroachSQLGrantAllSequencesPartialCoverage verifies that a
-// "GRANT ... ON ALL SEQUENCES IN SCHEMA" grant is read back correctly when the
-// schema contains a sequence that has no explicit grant row for the managed
-// role (e.g. one created after the grant was applied). Previously the read
-// function intersected privileges across every sequence in the schema, so a
-// single ungranted sequence collapsed the reported set to empty and produced
-// permanent drift.
-func TestAccCockroachSQLGrantAllSequencesPartialCoverage(t *testing.T) {
+// TestAccCockroachSQLGrantAllSequencesEmptySchema verifies that a
+// "GRANT ... ON ALL SEQUENCES IN SCHEMA" grant against a schema with no
+// sequences is read back without flapping. CockroachDB has nothing to grant
+// against and no rows to verify, so the Read must preserve the configured
+// privileges rather than reporting `[]` and triggering a perpetual update.
+// In practice this pairs with a `cockroachsql_default_privileges` resource
+// that ensures coverage for objects created later (e.g. by Atlas).
+func TestAccCockroachSQLGrantAllSequencesEmptySchema(t *testing.T) {
 	skipIfNotAcc(t)
 
 	dbSuffix, teardown := setupTestDatabase(t, true, true)
@@ -461,9 +461,56 @@ func TestAccCockroachSQLGrantAllSequencesPartialCoverage(t *testing.T) {
 
 	dbName, roleName := getTestDBNames(dbSuffix)
 
-	// Pre-create one covered sequence so that the initial GRANT ON ALL
-	// SEQUENCES has at least one row to apply to.
-	dropSeq := createTestSequences(t, dbSuffix, []string{"test_schema.covered_seq"}, "")
+	tfConfig := fmt.Sprintf(`
+resource "cockroachsql_grant" "test" {
+	database    = "%s"
+	role        = "%s"
+	schema      = "test_schema"
+	object_type = "sequence"
+	privileges  = ["USAGE", "SELECT"]
+}
+`, dbName, roleName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+			testCheckCompatibleVersion(t, featurePrivileges)
+		},
+		Providers: testAccProviders,
+		Steps: []resource.TestStep{
+			{
+				Config: tfConfig,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "2"),
+				),
+			},
+			// The schema still contains zero sequences. A second plan with
+			// the same config must be empty — otherwise the resource flaps
+			// forever on every refresh, which is exactly what prompted the
+			// fix.
+			{
+				Config:   tfConfig,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// TestAccCockroachSQLGrantAllSequencesCovered verifies that a
+// "GRANT ... ON ALL SEQUENCES IN SCHEMA" grant is read back correctly when
+// every existing sequence has the expected privileges.
+func TestAccCockroachSQLGrantAllSequencesCovered(t *testing.T) {
+	skipIfNotAcc(t)
+
+	dbSuffix, teardown := setupTestDatabase(t, true, true)
+	defer teardown()
+
+	dbName, roleName := getTestDBNames(dbSuffix)
+
+	dropSeq := createTestSequences(t, dbSuffix, []string{
+		"test_schema.covered_seq_a",
+		"test_schema.covered_seq_b",
+	}, "")
 	defer dropSeq()
 
 	tfConfig := fmt.Sprintf(`
@@ -489,17 +536,7 @@ resource "cockroachsql_grant" "test" {
 					resource.TestCheckResourceAttr("cockroachsql_grant.test", "privileges.#", "2"),
 				),
 			},
-			// Inject a sequence that is NOT covered by the existing grant
-			// (because it was created afterwards), then re-plan with the
-			// same config. The read function must still report
-			// ["USAGE","SELECT"] for the resource — otherwise the resource
-			// would flap on every refresh.
 			{
-				PreConfig: func() {
-					config := getTestConfig(t)
-					dbExecute(t, config.connStr(dbName),
-						"CREATE SEQUENCE test_schema.uncovered_seq")
-				},
 				Config:   tfConfig,
 				PlanOnly: true,
 			},
