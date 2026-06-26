@@ -221,6 +221,18 @@ func resourceCockroachSQLGrantDelete(db *DBConnection, d *schema.ResourceData) e
 	return nil
 }
 
+// objectTypeUsesAllRelevant reports whether the given (upper-cased) object_type
+// is one that the "GRANT ... ON ALL <type>S IN SCHEMA <s>" form supports. For
+// these types Read enumerates information_schema for the relevant objects;
+// other object types (database, schema, foreign_*) are not scoped that way.
+func objectTypeUsesAllRelevant(objectType string) bool {
+	switch objectType {
+	case "TABLE", "SEQUENCE", "FUNCTION", "PROCEDURE", "ROUTINE":
+		return true
+	}
+	return false
+}
+
 func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 	role := d.Get("role").(string)
 	objectType := strings.ToUpper(d.Get("object_type").(string))
@@ -414,20 +426,35 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 		}
 	} else if len(allRelevantObjects) > 0 {
 		// "GRANT ... ON ALL <type>S IN SCHEMA <s>" applies the listed
-		// privileges to every existing object plus future ones via the
-		// default_privileges machinery. When checking drift we therefore
-		// report the union of privileges seen on any relevant object: if
-		// any object is missing a grant row (e.g. it was created after
-		// the GRANT and no default privilege covers it yet) the
-		// intersection-based check would always collapse to empty and the
-		// resource would flap forever.
+		// privileges to every existing object. Compute the intersection
+		// of privileges actually present on every observed object so that
+		// drift is reported only when some object is missing a privilege
+		// the resource expects. Objects with no grant rows for this role
+		// are treated as empty sets (correctly producing drift), not as
+		// "skip" — that was the original bug, which would silently break
+		// the resource if any future object lacked grants.
+		first := true
 		for objName := range allRelevantObjects {
 			foundSet := objectGrants[objName]
 			if foundSet == nil {
-				continue
+				foundSet = schema.NewSet(schema.HashString, []any{})
 			}
-			grantedSet = grantedSet.Union(foundSet)
+			if first {
+				grantedSet = foundSet
+				first = false
+			} else {
+				grantedSet = grantedSet.Intersection(foundSet)
+			}
 		}
+	} else if objects.Len() == 0 && schemaName != "" && objectTypeUsesAllRelevant(objectType) {
+		// objects was unset AND the information_schema lookup found zero
+		// relevant objects in the schema (e.g. no sequences exist yet in
+		// `public`). There is nothing in the catalog to verify the grant
+		// against. Preserve the configured privileges so the resource does
+		// not flap when the schema is temporarily empty — the matching
+		// DefaultPrivileges resource is what ensures coverage for future
+		// objects.
+		grantedSet = d.Get("privileges").(*schema.Set)
 	} else {
 		for _, v := range objectGrants {
 			grantedSet = v
