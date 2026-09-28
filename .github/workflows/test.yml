@@ -77,6 +77,6 @@ jobs:
   allow-merge:
     if: always()
     needs: [lint, build-devcontainer, test]
-    uses: nellisauction/.github/.github/workflows/allow-merge.yml@main
+    uses: ./.github/workflows/allow-merge.yml
     with:
       failed: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}

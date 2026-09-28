@@ -1,0 +1,38 @@
+name: Allow Merge
+
+# Local copy of nellisauction/.github/.github/workflows/allow-merge.yml.
+#
+# This repository is public and nellisauction/.github is private; GitHub does
+# not allow a public repository to call reusable workflows from a private one,
+# so the shared workflow cannot be referenced directly. Keeping the same job
+# name here produces the same "allow-merge / allow-merge" status check that the
+# org rulesets require. If nellisauction/.github becomes public, replace the
+# `uses: ./.github/workflows/allow-merge.yml` reference in test.yml with
+# `uses: nellisauction/.github/.github/workflows/allow-merge.yml@main` and
+# delete this file.
+
+on:
+  workflow_call:
+    inputs:
+      failed:
+        description: >
+          Pass 'true' when any required upstream job failed or was cancelled.
+          Derive with:
+          contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        required: true
+        type: string
+
+jobs:
+  allow-merge:
+    name: allow-merge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required jobs
+        env:
+          FAILED: ${{ inputs.failed }}
+        run: |
+          if [[ "$FAILED" == "true" ]]; then
+            echo "One or more required checks failed or were cancelled."
+            exit 1
+          fi
+          echo "All required checks passed."
