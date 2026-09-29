@@ -1,16 +1,5 @@
 name: Allow Merge
 
-# Local copy of nellisauction/.github/.github/workflows/allow-merge.yml.
-#
-# This repository is public and nellisauction/.github is private; GitHub does
-# not allow a public repository to call reusable workflows from a private one,
-# so the shared workflow cannot be referenced directly. Keeping the same job
-# name here produces the same "allow-merge / allow-merge" status check that the
-# org rulesets require. If nellisauction/.github becomes public, replace the
-# `uses: ./.github/workflows/allow-merge.yml` reference in test.yml with
-# `uses: nellisauction/.github/.github/workflows/allow-merge.yml@main` and
-# delete this file.
-
 on:
   workflow_call:
     inputs:
