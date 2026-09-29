@@ -22,11 +22,10 @@ const (
 
 func resourceCockroachSQLSchema() *schema.Resource {
 	return &schema.Resource{
-		Create: ResourceFunc(resourceCockroachSQLSchemaCreate),
-		Read:   ResourceFunc(resourceCockroachSQLSchemaRead),
-		Update: ResourceFunc(resourceCockroachSQLSchemaUpdate),
-		Delete: ResourceFunc(resourceCockroachSQLSchemaDelete),
-		Exists: ResourceExistsFunc(resourceCockroachSQLSchemaExists),
+		CreateContext: ResourceFunc(resourceCockroachSQLSchemaCreate),
+		ReadContext:   ResourceFunc(resourceCockroachSQLSchemaRead),
+		UpdateContext: ResourceFunc(resourceCockroachSQLSchemaUpdate),
+		DeleteContext: ResourceFunc(resourceCockroachSQLSchemaDelete),
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
@@ -238,6 +237,15 @@ func resourceCockroachSQLSchemaExists(db *DBConnection, d *schema.ResourceData) 
 }
 
 func resourceCockroachSQLSchemaRead(db *DBConnection, d *schema.ResourceData) error {
+	exists, err := resourceCockroachSQLSchemaExists(db, d)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		d.SetId("")
+		return nil
+	}
+
 	return resourceCockroachSQLSchemaReadImpl(db, d)
 }
 

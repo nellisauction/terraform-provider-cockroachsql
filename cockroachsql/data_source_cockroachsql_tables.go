@@ -19,7 +19,7 @@ const (
 
 func dataSourceCockroachSQLDatabaseTables() *schema.Resource {
 	return &schema.Resource{
-		Read: ResourceFunc(dataSourceCockroachSQLTablesRead),
+		ReadContext: ResourceFunc(dataSourceCockroachSQLTablesRead),
 		Schema: map[string]*schema.Schema{
 			"database": {
 				Type:        schema.TypeString,

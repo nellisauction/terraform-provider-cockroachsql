@@ -121,7 +121,7 @@ func TestAccCockroachSQLGrantRole(t *testing.T) {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(testAccCockroachSQLGrantRoleResources, roleName),

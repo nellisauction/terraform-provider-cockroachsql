@@ -43,7 +43,7 @@ resource "cockroachsql_default_privileges" "test_ro" {
 					testAccPreCheck(t)
 					testCheckCompatibleVersion(t, featurePrivileges)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: fmt.Sprintf(tfConfig, `[]`),
@@ -164,7 +164,7 @@ resource "cockroachsql_default_privileges" "test_ro" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: stateConfig,
@@ -222,7 +222,7 @@ resource "cockroachsql_default_privileges" "test_ro" {
 					testAccPreCheck(t)
 					testCheckCompatibleVersion(t, featurePrivileges)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: fmt.Sprintf(tfConfig, `["SELECT"]`),
@@ -299,7 +299,7 @@ resource "cockroachsql_default_privileges" "test_ro" {
 					testCheckCompatibleVersion(t, featurePrivileges)
 					testCheckCompatibleVersion(t, featurePrivilegesOnSchemas)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: fmt.Sprintf(tfConfig, `[]`),
@@ -369,7 +369,7 @@ resource "cockroachsql_default_privileges" "test_ro" {
 			// ROUTINE object type in ALTER DEFAULT PRIVILEGES is not supported by CockroachDB.
 			testCheckCompatibleVersion(t, featureRoutine)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: resourceConfig,

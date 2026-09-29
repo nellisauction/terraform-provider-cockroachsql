@@ -15,10 +15,10 @@ import (
 
 func resourceCockroachSQLDefaultPrivileges() *schema.Resource {
 	return &schema.Resource{
-		Create: ResourceFunc(resourceCockroachSQLDefaultPrivilegesCreate),
-		Update: ResourceFunc(resourceCockroachSQLDefaultPrivilegesCreate),
-		Read:   ResourceFunc(resourceCockroachSQLDefaultPrivilegesRead),
-		Delete: ResourceFunc(resourceCockroachSQLDefaultPrivilegesDelete),
+		CreateContext: ResourceFunc(resourceCockroachSQLDefaultPrivilegesCreate),
+		UpdateContext: ResourceFunc(resourceCockroachSQLDefaultPrivilegesCreate),
+		ReadContext:   ResourceFunc(resourceCockroachSQLDefaultPrivilegesRead),
+		DeleteContext: ResourceFunc(resourceCockroachSQLDefaultPrivilegesDelete),
 
 		Schema: map[string]*schema.Schema{
 			"role": {

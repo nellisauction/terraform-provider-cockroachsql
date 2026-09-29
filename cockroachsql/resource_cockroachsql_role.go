@@ -71,11 +71,10 @@ func parseCRDBDurationMs(s string) (int, error) {
 
 func resourceCockroachSQLRole() *schema.Resource {
 	return &schema.Resource{
-		Create: ResourceFunc(resourceCockroachSQLRoleCreate),
-		Read:   ResourceFunc(resourceCockroachSQLRoleRead),
-		Update: ResourceFunc(resourceCockroachSQLRoleUpdate),
-		Delete: ResourceFunc(resourceCockroachSQLRoleDelete),
-		Exists: ResourceExistsFunc(resourceCockroachSQLRoleExists),
+		CreateContext: ResourceFunc(resourceCockroachSQLRoleCreate),
+		ReadContext:   ResourceFunc(resourceCockroachSQLRoleRead),
+		UpdateContext: ResourceFunc(resourceCockroachSQLRoleUpdate),
+		DeleteContext: ResourceFunc(resourceCockroachSQLRoleDelete),
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext,
 		},
@@ -362,6 +361,15 @@ func resourceCockroachSQLRoleExists(db *DBConnection, d *schema.ResourceData) (b
 }
 
 func resourceCockroachSQLRoleRead(db *DBConnection, d *schema.ResourceData) error {
+	exists, err := resourceCockroachSQLRoleExists(db, d)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		d.SetId("")
+		return nil
+	}
+
 	return resourceCockroachSQLRoleReadImpl(db, d)
 }
 

@@ -18,8 +18,8 @@ func TestAccCockroachSQLRole_Basic(t *testing.T) {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLRoleDestroy,
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLRoleDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCockroachSQLRoleConfig,
@@ -70,8 +70,8 @@ resource "cockroachsql_role" "update_role" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLRoleDestroy,
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLRoleDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: configCreate,
