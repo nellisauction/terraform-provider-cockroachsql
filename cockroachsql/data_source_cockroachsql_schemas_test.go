@@ -27,8 +27,8 @@ func TestAccCockroachSQLDataSourceSchemas(t *testing.T) {
 	testAccCockroachSQLDataSourceSchemasDatabaseConfig := generateDataSourceSchemasConfig(dbName)
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:  func() { testAccPreCheck(t) },
-		Providers: testAccProviders,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCockroachSQLDataSourceSchemasDatabaseConfig,

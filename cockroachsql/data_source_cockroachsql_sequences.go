@@ -18,7 +18,7 @@ const (
 
 func dataSourceCockroachSQLDatabaseSequences() *schema.Resource {
 	return &schema.Resource{
-		Read: ResourceFunc(dataSourceCockroachSQLSequencesRead),
+		ReadContext: ResourceFunc(dataSourceCockroachSQLSequencesRead),
 		Schema: map[string]*schema.Schema{
 			"database": {
 				Type:        schema.TypeString,

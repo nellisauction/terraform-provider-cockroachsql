@@ -25,7 +25,7 @@ const schemaPatternMatchingTarget = "schema_name"
 
 func dataSourceCockroachSQLDatabaseSchemas() *schema.Resource {
 	return &schema.Resource{
-		Read: ResourceFunc(dataSourceCockroachSQLSchemasRead),
+		ReadContext: ResourceFunc(dataSourceCockroachSQLSchemasRead),
 		Schema: map[string]*schema.Schema{
 			"database": {
 				Type:        schema.TypeString,

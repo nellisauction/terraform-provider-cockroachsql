@@ -28,9 +28,9 @@ WHERE
 
 func resourceCockroachSQLGrantRole() *schema.Resource {
 	return &schema.Resource{
-		Create: ResourceFunc(resourceCockroachSQLGrantRoleCreate),
-		Read:   ResourceFunc(resourceCockroachSQLGrantRoleRead),
-		Delete: ResourceFunc(resourceCockroachSQLGrantRoleDelete),
+		CreateContext: ResourceFunc(resourceCockroachSQLGrantRoleCreate),
+		ReadContext:   ResourceFunc(resourceCockroachSQLGrantRoleRead),
+		DeleteContext: ResourceFunc(resourceCockroachSQLGrantRoleDelete),
 
 		Schema: map[string]*schema.Schema{
 			"role": {

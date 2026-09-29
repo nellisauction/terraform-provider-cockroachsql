@@ -1,12 +1,14 @@
 package cockroachsql
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/blang/semver"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
@@ -188,7 +190,7 @@ func Provider() *schema.Provider {
 			"cockroachsql_sequences": dataSourceCockroachSQLDatabaseSequences(),
 		},
 
-		ConfigureFunc: providerConfigure,
+		ConfigureContextFunc: providerConfigure,
 	}
 }
 
@@ -199,7 +201,7 @@ func validateExpectedVersion(v any, key string) (warnings []string, errors []err
 	return
 }
 
-func providerConfigure(d *schema.ResourceData) (any, error) {
+func providerConfigure(_ context.Context, d *schema.ResourceData) (any, diag.Diagnostics) {
 	var sslMode string
 	if sslModeRaw, ok := d.GetOk("sslmode"); ok {
 		sslMode = sslModeRaw.(string)

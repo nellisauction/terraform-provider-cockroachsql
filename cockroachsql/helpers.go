@@ -1,39 +1,28 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"regexp"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/lib/pq"
 )
 
-func ResourceFunc(fn func(*DBConnection, *schema.ResourceData) error) func(*schema.ResourceData, any) error {
-	return func(d *schema.ResourceData, meta any) error {
+func ResourceFunc(fn func(*DBConnection, *schema.ResourceData) error) func(context.Context, *schema.ResourceData, any) diag.Diagnostics {
+	return func(_ context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
 		client := meta.(*Client)
 
 		db, err := client.Connect()
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 
-		return fn(db, d)
-	}
-}
-
-func ResourceExistsFunc(fn func(*DBConnection, *schema.ResourceData) (bool, error)) func(*schema.ResourceData, any) (bool, error) {
-	return func(d *schema.ResourceData, meta any) (bool, error) {
-		client := meta.(*Client)
-
-		db, err := client.Connect()
-		if err != nil {
-			return false, err
-		}
-
-		return fn(db, d)
+		return diag.FromErr(fn(db, d))
 	}
 }
 

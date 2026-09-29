@@ -10,9 +10,9 @@ import (
 
 func TestAccCockroachSQLDatabase_Basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLDatabaseDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCockroachSQLDatabaseConfig,
@@ -42,9 +42,9 @@ func TestAccCockroachSQLDatabase_Basic(t *testing.T) {
 
 func TestAccCockroachSQLDatabase_DefaultOwner(t *testing.T) {
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLDatabaseDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCockroachSQLDatabaseConfig,
@@ -60,9 +60,9 @@ func TestAccCockroachSQLDatabase_Update(t *testing.T) {
 	dbName := "update_test"
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLDatabaseDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`resource "cockroachsql_database" "test" { name = "%s" }`, dbName),
@@ -89,9 +89,9 @@ func TestAccCockroachSQLDatabase_GrantOwner(t *testing.T) {
 	dbName := "grant_owner_test"
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLDatabaseDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLDatabaseDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: `resource "cockroachsql_role" "owner" { name = "initial_owner" }`,

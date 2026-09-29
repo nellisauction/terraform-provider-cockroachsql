@@ -48,7 +48,7 @@ resource cockroachsql_grant "test" {
 					testAccPreCheck(t)
 					testCheckCompatibleVersion(t, featurePrivileges)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: tfConfig,
@@ -102,7 +102,7 @@ resource cockroachsql_grant "test" {
 					testAccPreCheck(t)
 					testCheckCompatibleVersion(t, featurePrivileges)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: tfConfig,
@@ -155,7 +155,7 @@ resource cockroachsql_grant "test" {
 					testAccPreCheck(t)
 					testCheckCompatibleVersion(t, featureProcedure)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: tfConfig,
@@ -213,7 +213,7 @@ resource cockroachsql_grant "test" {
 					testAccPreCheck(t)
 					testCheckCompatibleVersion(t, featureRoutine)
 				},
-				Providers: testAccProviders,
+				ProviderFactories: testAccProviderFactories,
 				Steps: []resource.TestStep{
 					{
 						Config: tfConfigRoutine,
@@ -251,7 +251,7 @@ resource "cockroachsql_grant" "test" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(config, `["CONNECT"]`),
@@ -291,7 +291,7 @@ func TestAccCockroachSQLImplicitGrants(t *testing.T) {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(tfConfig, dbName, roleName),
@@ -335,7 +335,7 @@ resource "cockroachsql_grant" "test" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(config, roleName, dbName, dbName, `["USAGE"]`),
@@ -379,7 +379,7 @@ resource "cockroachsql_grant" "test" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: tfConfig,
@@ -429,7 +429,7 @@ resource "cockroachsql_grant" "test" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: tfConfig,
@@ -476,7 +476,7 @@ resource "cockroachsql_grant" "test" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: tfConfig,
@@ -528,7 +528,7 @@ resource "cockroachsql_grant" "test" {
 			testAccPreCheck(t)
 			testCheckCompatibleVersion(t, featurePrivileges)
 		},
-		Providers: testAccProviders,
+		ProviderFactories: testAccProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: tfConfig,

@@ -11,9 +11,9 @@ import (
 
 func TestAccCockroachSQLSchema_Basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLSchemaDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLSchemaDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccCockroachSQLSchemaConfig,
@@ -49,9 +49,9 @@ resource "cockroachsql_schema" "test" {
 `, dbName)
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLSchemaDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLSchemaDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,
@@ -78,9 +78,9 @@ resource "cockroachsql_schema" "test" {
 `, dbName)
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLSchemaDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLSchemaDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,
@@ -110,9 +110,9 @@ resource "cockroachsql_schema" "test" {
 `
 
 	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckCockroachSQLSchemaDestroy,
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckCockroachSQLSchemaDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: config,

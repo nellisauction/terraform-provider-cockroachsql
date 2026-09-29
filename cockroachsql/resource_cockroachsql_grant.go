@@ -29,10 +29,10 @@ type ResourceSchemeGetter func(string) any
 
 func resourceCockroachSQLGrant() *schema.Resource {
 	return &schema.Resource{
-		Create: ResourceFunc(resourceCockroachSQLGrantCreate),
-		Update: ResourceFunc(resourceCockroachSQLGrantUpdate),
-		Read:   ResourceFunc(resourceCockroachSQLGrantRead),
-		Delete: ResourceFunc(resourceCockroachSQLGrantDelete),
+		CreateContext: ResourceFunc(resourceCockroachSQLGrantCreate),
+		UpdateContext: ResourceFunc(resourceCockroachSQLGrantUpdate),
+		ReadContext:   ResourceFunc(resourceCockroachSQLGrantRead),
+		DeleteContext: ResourceFunc(resourceCockroachSQLGrantDelete),
 
 		Schema: map[string]*schema.Schema{
 			"role": {
