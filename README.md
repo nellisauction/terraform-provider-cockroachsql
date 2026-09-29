@@ -13,7 +13,7 @@ Features:
 Requirements
 ------------
 - [Terraform](https://www.terraform.io/downloads.html) 1.0+
-- [Go](https://golang.org/doc/install) 1.25+ (to build the provider plugin)
+- [Go](https://golang.org/doc/install) 1.27+ (to build the provider plugin)
 - **CockroachDB**: v23.2.0+ (LTS) is the minimum supported version.
 
 Building The Provider

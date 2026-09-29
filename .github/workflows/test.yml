@@ -16,14 +16,14 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25.8'
+          go-version: '1.27.1'
 
       - run: go mod vendor
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12.2
+          version: v2.13.0
 
   build-devcontainer:
     runs-on: blacksmith-4vcpu-ubuntu-2204
