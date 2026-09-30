@@ -661,6 +661,9 @@ func revokeRoles(ctx context.Context, db QueryAble, d *schema.ResourceData) erro
 		}
 		grantedRoles = append(grantedRoles, grantedRole)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	for _, grantedRole := range grantedRoles {
 		query = fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(grantedRole), pq.QuoteIdentifier(role))

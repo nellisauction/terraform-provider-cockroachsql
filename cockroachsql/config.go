@@ -262,10 +262,8 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", c.config.Host, errString)
 		}
 
-		if err == nil {
-			err = db.PingContext(ctx)
-		}
-		if err != nil {
+		if err := db.PingContext(ctx); err != nil {
+			_ = db.Close()
 			errString := strings.Replace(err.Error(), c.config.Password, "XXXX", 2)
 			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", c.config.Host, errString)
 		}

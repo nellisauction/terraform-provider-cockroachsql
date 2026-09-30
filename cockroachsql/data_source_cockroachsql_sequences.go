@@ -125,6 +125,9 @@ func dataSourceCockroachSQLSequencesRead(ctx context.Context, db *DBConnection, 
 		result["data_type"] = data_type
 		sequences = append(sequences, result)
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read sequences for database: %w", err)
+	}
 
 	d.Set("sequences", sequences)
 	d.SetId(generateDataSourceSequencesID(d, database))

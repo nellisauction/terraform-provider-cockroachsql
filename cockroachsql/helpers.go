@@ -7,6 +7,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -135,6 +136,19 @@ func withRolesGranted(ctx context.Context, db QueryAble, roles []string, fn func
 	}
 
 	grantedRoles := []string{}
+	defer func() {
+		if len(grantedRoles) == 0 {
+			return
+		}
+		cleanupCtx, cancel := cleanupContext(ctx)
+		defer cancel()
+		for _, role := range grantedRoles {
+			if _, err := db.ExecContext(cleanupCtx, fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
+				log.Printf("[ERR] could not revoke role %s from %s: %v", role, currentUser, err)
+			}
+		}
+	}()
+
 	for _, role := range roles {
 		if role == "" || role == currentUser {
 			continue
@@ -146,17 +160,11 @@ func withRolesGranted(ctx context.Context, db QueryAble, roles []string, fn func
 		grantedRoles = append(grantedRoles, role)
 	}
 
-	if len(grantedRoles) > 0 {
-		defer func() {
-			for _, role := range grantedRoles {
-				if _, err := db.ExecContext(ctx, fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
-					log.Printf("[ERR] could not revoke role %s from %s: %v", role, currentUser, err)
-				}
-			}
-		}()
-	}
-
 	return fn()
+}
+
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 }
 
 func sliceContainsStr(haystack []string, needle string) bool {
@@ -412,6 +420,9 @@ func getTablesOwner(ctx context.Context, db QueryAble, schemaName string) ([]str
 		}
 		owners = append(owners, owner)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("could not read tables owners: %w", err)
+	}
 
 	return owners, nil
 }
@@ -433,6 +444,8 @@ func resolveOwners(ctx context.Context, db QueryAble, owners []string) ([]string
 }
 
 const publicRole = "public"
+
+const cleanupTimeout = 30 * time.Second
 
 func findStringSubmatchMap(expression string, text string) map[string]string {
 

@@ -119,6 +119,9 @@ func dataSourceCockroachSQLSchemasRead(ctx context.Context, db *DBConnection, d 
 		}
 		schemas = append(schemas, schema)
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read schemas for database: %w", err)
+	}
 
 	d.Set("schemas", stringSliceToSet(schemas))
 	d.SetId(generateDataSourceSchemasID(d, database))

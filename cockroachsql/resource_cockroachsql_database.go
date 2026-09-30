@@ -106,7 +106,9 @@ func createDatabase(ctx context.Context, db *DBConnection, d *schema.ResourceDat
 		}
 		if ownerGranted {
 			defer func() {
-				_, _ = revokeRoleMembership(ctx, db, owner, currentUser)
+				cleanupCtx, cancel := cleanupContext(ctx)
+				defer cancel()
+				_, _ = revokeRoleMembership(cleanupCtx, db, owner, currentUser)
 			}()
 		}
 	}
@@ -164,7 +166,9 @@ func resourceCockroachSQLDatabaseDelete(ctx context.Context, db *DBConnection, d
 		}
 		if ownerGranted {
 			defer func() {
-				_, _ = revokeRoleMembership(ctx, db, owner, currentUser)
+				cleanupCtx, cancel := cleanupContext(ctx)
+				defer cancel()
+				_, _ = revokeRoleMembership(cleanupCtx, db, owner, currentUser)
 			}()
 		}
 	}
@@ -284,7 +288,9 @@ func setDBOwner(ctx context.Context, db *DBConnection, d *schema.ResourceData) e
 	}
 	if ownerGranted {
 		defer func() {
-			_, _ = revokeRoleMembership(ctx, db, owner, currentUser)
+			cleanupCtx, cancel := cleanupContext(ctx)
+			defer cancel()
+			_, _ = revokeRoleMembership(cleanupCtx, db, owner, currentUser)
 		}()
 	}
 

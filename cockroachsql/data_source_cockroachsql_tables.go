@@ -133,6 +133,9 @@ func dataSourceCockroachSQLTablesRead(ctx context.Context, db *DBConnection, d *
 		result["table_type"] = table_type
 		tables = append(tables, result)
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read tables for database: %w", err)
+	}
 
 	d.Set("tables", tables)
 	d.SetId(generateDataSourceTablesID(d, database))

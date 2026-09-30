@@ -304,6 +304,9 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 			privileges = append(privileges, strings.ToUpper(r_privilege_type))
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read default privileges: %w", err)
+	}
 
 	// We consider no privileges as "not exists" unless no privileges were provided as input
 	if len(privileges) == 0 {
