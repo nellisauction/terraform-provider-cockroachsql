@@ -23,7 +23,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.0
+          version: v2.13.2
 
   build-devcontainer:
     runs-on: blacksmith-4vcpu-ubuntu-2204
