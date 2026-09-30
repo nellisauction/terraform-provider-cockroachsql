@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -115,10 +116,10 @@ func (db *DBConnection) featureSupported(name featureName) bool {
 }
 
 // isSuperuser returns true if connected user is a CockroachDB SUPERUSER
-func (db *DBConnection) isSuperuser() (bool, error) {
+func (db *DBConnection) isSuperuser(ctx context.Context) (bool, error) {
 	var superuser bool
 
-	if err := db.QueryRow("SELECT rolsuper FROM pg_roles WHERE rolname = CURRENT_USER").Scan(&superuser); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT rolsuper FROM pg_roles WHERE rolname = CURRENT_USER").Scan(&superuser); err != nil {
 		return false, fmt.Errorf("could not check if current user is superuser: %w", err)
 	}
 
@@ -232,9 +233,9 @@ func (c *Config) getDatabaseUsername() string {
 }
 
 // Connect returns a copy to an sql.Open()'ed database connection wrapped in a DBConnection struct.
-// Callers must return their database resources. Use of QueryRow() or Exec() is encouraged.
-// Query() must have their rows.Close()'ed.
-func (c *Client) Connect() (*DBConnection, error) {
+// Callers must return their database resources. Use of QueryRowContext() or ExecContext() is encouraged.
+// QueryContext() must have their rows.Close()'ed.
+func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	dbRegistryLock.Lock()
 	defer dbRegistryLock.Unlock()
 
@@ -244,7 +245,10 @@ func (c *Client) Connect() (*DBConnection, error) {
 	}
 	conn, found := dbRegistry[dsn]
 	if found {
-		if err := conn.Ping(); err != nil {
+		if err := conn.PingContext(ctx); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			log.Printf("[DEBUG] cockroachsql: cached connection for %s is dead: %v. Re-opening.", dsn, err)
 			_ = conn.Close()
 			delete(dbRegistry, dsn)
@@ -259,7 +263,7 @@ func (c *Client) Connect() (*DBConnection, error) {
 		}
 
 		if err == nil {
-			err = db.Ping()
+			err = db.PingContext(ctx)
 		}
 		if err != nil {
 			errString := strings.Replace(err.Error(), c.config.Password, "XXXX", 2)
@@ -276,7 +280,7 @@ func (c *Client) Connect() (*DBConnection, error) {
 		version := &c.config.ExpectedVersion
 		if defaultVersion.Equals(c.config.ExpectedVersion) {
 			// Version hint not set by user, need to fingerprint
-			v, err := fingerprintCapabilities(db)
+			v, err := fingerprintCapabilities(ctx, db)
 			if err != nil {
 				_ = db.Close()
 				return nil, fmt.Errorf("error detecting capabilities: %w", err)
@@ -297,9 +301,9 @@ func (c *Client) Connect() (*DBConnection, error) {
 
 // fingerprintCapabilities queries CockroachDB to populate a local catalog of
 // capabilities.  This is only run once per Client.
-func fingerprintCapabilities(db *sql.DB) (*semver.Version, error) {
+func fingerprintCapabilities(ctx context.Context, db *sql.DB) (*semver.Version, error) {
 	var crdbVersion string
-	err := db.QueryRow(`SELECT VERSION()`).Scan(&crdbVersion)
+	err := db.QueryRowContext(ctx, `SELECT VERSION()`).Scan(&crdbVersion)
 	if err != nil {
 		return nil, fmt.Errorf("error CockroachDB version: %w", err)
 	}

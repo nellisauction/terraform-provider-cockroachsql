@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -76,13 +77,13 @@ func dataSourceCockroachSQLDatabaseSchemas() *schema.Resource {
 	}
 }
 
-func dataSourceCockroachSQLSchemasRead(db *DBConnection, d *schema.ResourceData) error {
+func dataSourceCockroachSQLSchemasRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	database := d.Get("database").(string)
 
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -103,7 +104,7 @@ func dataSourceCockroachSQLSchemasRead(db *DBConnection, d *schema.ResourceData)
 
 	query = applySchemaDataSourceQueryFilters(query, queryConcatKeyword, d)
 
-	rows, err := conn.Query(query)
+	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}

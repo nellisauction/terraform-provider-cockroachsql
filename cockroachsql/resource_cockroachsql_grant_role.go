@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -56,7 +57,7 @@ func resourceCockroachSQLGrantRole() *schema.Resource {
 	}
 }
 
-func resourceCockroachSQLGrantRoleRead(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLGrantRoleRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	if !db.featureSupported(featurePrivileges) {
 		return fmt.Errorf(
 			"cockroachsql_grant_role resource is not supported for this CockroachSQL version (%s)",
@@ -64,10 +65,10 @@ func resourceCockroachSQLGrantRoleRead(db *DBConnection, d *schema.ResourceData)
 		)
 	}
 
-	return readGrantRole(db, d)
+	return readGrantRole(ctx, db, d)
 }
 
-func resourceCockroachSQLGrantRoleCreate(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLGrantRoleCreate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	if !db.featureSupported(featurePrivileges) {
 		return fmt.Errorf(
 			"cockroachsql_grant_role resource is not supported for this CockroachSQL version (%s)",
@@ -76,20 +77,20 @@ func resourceCockroachSQLGrantRoleCreate(db *DBConnection, d *schema.ResourceDat
 	}
 
 	// Revoke the granted roles before granting them again.
-	if err := revokeRole(db, d); err != nil {
+	if err := revokeRole(ctx, db, d); err != nil {
 		return err
 	}
 
-	if err := grantRole(db, d); err != nil {
+	if err := grantRole(ctx, db, d); err != nil {
 		return err
 	}
 
 	d.SetId(generateGrantRoleID(d))
 
-	return readGrantRole(db, d)
+	return readGrantRole(ctx, db, d)
 }
 
-func resourceCockroachSQLGrantRoleDelete(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLGrantRoleDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	if !db.featureSupported(featurePrivileges) {
 		return fmt.Errorf(
 			"cockroachsql_grant_role resource is not supported for this CockroachSQL version (%s)",
@@ -97,14 +98,14 @@ func resourceCockroachSQLGrantRoleDelete(db *DBConnection, d *schema.ResourceDat
 		)
 	}
 
-	if err := revokeRole(db, d); err != nil {
+	if err := revokeRole(ctx, db, d); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func readGrantRole(db QueryAble, d *schema.ResourceData) error {
+func readGrantRole(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	var roleName, grantRoleName string
 	var withAdminOption bool
 
@@ -116,7 +117,7 @@ func readGrantRole(db QueryAble, d *schema.ResourceData) error {
 		&withAdminOption,
 	}
 
-	err := db.QueryRow(getGrantRoleQuery, d.Get("role"), d.Get("grant_role")).Scan(values...)
+	err := db.QueryRowContext(ctx, getGrantRoleQuery, d.Get("role"), d.Get("grant_role")).Scan(values...)
 	switch {
 	case err == sql.ErrNoRows:
 		log.Printf("[WARN] CockroachSQL grant role (%q) not found", grantRoleID)
@@ -162,17 +163,17 @@ func createRevokeRoleQuery(d *schema.ResourceData) string {
 	)
 }
 
-func grantRole(db QueryAble, d *schema.ResourceData) error {
+func grantRole(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	query := createGrantRoleQuery(d)
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("could not execute grant query (SQL: %s): %w", query, err)
 	}
 	return nil
 }
 
-func revokeRole(db QueryAble, d *schema.ResourceData) error {
+func revokeRole(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	query := createRevokeRoleQuery(d)
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("could not execute revoke query (SQL: %s): %w", query, err)
 	}
 	return nil

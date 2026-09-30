@@ -2,6 +2,7 @@ package cockroachsql
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -84,28 +85,28 @@ func resourceCockroachSQLDatabase() *schema.Resource {
 	}
 }
 
-func resourceCockroachSQLDatabaseCreate(db *DBConnection, d *schema.ResourceData) error {
-	if err := createDatabase(db, d); err != nil {
+func resourceCockroachSQLDatabaseCreate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if err := createDatabase(ctx, db, d); err != nil {
 		return err
 	}
 
 	d.SetId(d.Get(dbNameAttr).(string))
 
-	return resourceCockroachSQLDatabaseReadImpl(db, d)
+	return resourceCockroachSQLDatabaseReadImpl(ctx, db, d)
 }
 
-func createDatabase(db *DBConnection, d *schema.ResourceData) error {
+func createDatabase(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	currentUser := db.client.config.getDatabaseUsername()
 	owner := d.Get(dbOwnerAttr).(string)
 
 	if owner != "" {
-		ownerGranted, err := grantRoleMembership(db, owner, currentUser)
+		ownerGranted, err := grantRoleMembership(ctx, db, owner, currentUser)
 		if err != nil {
 			return err
 		}
 		if ownerGranted {
 			defer func() {
-				_, _ = revokeRoleMembership(db, owner, currentUser)
+				_, _ = revokeRoleMembership(ctx, db, owner, currentUser)
 			}()
 		}
 	}
@@ -145,37 +146,37 @@ func createDatabase(db *DBConnection, d *schema.ResourceData) error {
 	}
 
 	query := b.String()
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("error creating database %q (SQL: %s): %w", dbName, query, err)
 	}
 
 	return nil
 }
 
-func resourceCockroachSQLDatabaseDelete(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLDatabaseDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	currentUser := db.client.config.getDatabaseUsername()
 	owner := d.Get(dbOwnerAttr).(string)
 
 	if owner != "" {
-		ownerGranted, err := grantRoleMembership(db, owner, currentUser)
+		ownerGranted, err := grantRoleMembership(ctx, db, owner, currentUser)
 		if err != nil {
 			return err
 		}
 		if ownerGranted {
 			defer func() {
-				_, _ = revokeRoleMembership(db, owner, currentUser)
+				_, _ = revokeRoleMembership(ctx, db, owner, currentUser)
 			}()
 		}
 	}
 
 	dbName := d.Get(dbNameAttr).(string)
 
-	if err := terminateBConnections(db, dbName); err != nil {
+	if err := terminateBConnections(ctx, db, dbName); err != nil {
 		return err
 	}
 
 	query := fmt.Sprintf("DROP DATABASE %s", pq.QuoteIdentifier(dbName))
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("error dropping database: %w", err)
 	}
 
@@ -184,12 +185,12 @@ func resourceCockroachSQLDatabaseDelete(db *DBConnection, d *schema.ResourceData
 	return nil
 }
 
-func resourceCockroachSQLDatabaseExists(db *DBConnection, d *schema.ResourceData) (bool, error) {
-	return dbExists(db, d.Id())
+func resourceCockroachSQLDatabaseExists(ctx context.Context, db *DBConnection, d *schema.ResourceData) (bool, error) {
+	return dbExists(ctx, db, d.Id())
 }
 
-func resourceCockroachSQLDatabaseRead(db *DBConnection, d *schema.ResourceData) error {
-	exists, err := resourceCockroachSQLDatabaseExists(db, d)
+func resourceCockroachSQLDatabaseRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	exists, err := resourceCockroachSQLDatabaseExists(ctx, db, d)
 	if err != nil {
 		return err
 	}
@@ -198,13 +199,13 @@ func resourceCockroachSQLDatabaseRead(db *DBConnection, d *schema.ResourceData) 
 		return nil
 	}
 
-	return resourceCockroachSQLDatabaseReadImpl(db, d)
+	return resourceCockroachSQLDatabaseReadImpl(ctx, db, d)
 }
 
-func resourceCockroachSQLDatabaseReadImpl(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLDatabaseReadImpl(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	dbId := d.Id()
 	var dbName, ownerName string
-	err := db.QueryRow("SELECT d.datname, pg_catalog.pg_get_userbyid(d.datdba) from pg_database d WHERE datname=$1", dbId).Scan(&dbName, &ownerName)
+	err := db.QueryRowContext(ctx, "SELECT d.datname, pg_catalog.pg_get_userbyid(d.datdba) from pg_database d WHERE datname=$1", dbId).Scan(&dbName, &ownerName)
 	switch {
 	case err == sql.ErrNoRows:
 		log.Printf("[WARN] CockroachSQL database (%q) not found", dbId)
@@ -227,7 +228,7 @@ func resourceCockroachSQLDatabaseReadImpl(db *DBConnection, d *schema.ResourceDa
 		`FROM pg_catalog.pg_database AS d, pg_catalog.pg_tablespace AS ts ` +
 		`WHERE d.datname = $1 AND d.dattablespace = ts.oid`
 	dbSQL := fmt.Sprintf(dbSQLFmt, strings.Join(columns, ", "))
-	err = db.QueryRow(dbSQL, dbId).
+	err = db.QueryRowContext(ctx, dbSQL, dbId).
 		Scan(
 			&dbEncoding,
 			&dbCollation,
@@ -258,15 +259,15 @@ func resourceCockroachSQLDatabaseReadImpl(db *DBConnection, d *schema.ResourceDa
 	return nil
 }
 
-func resourceCockroachSQLDatabaseUpdate(db *DBConnection, d *schema.ResourceData) error {
-	if err := setDBOwner(db, d); err != nil {
+func resourceCockroachSQLDatabaseUpdate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if err := setDBOwner(ctx, db, d); err != nil {
 		return err
 	}
 
-	return resourceCockroachSQLDatabaseReadImpl(db, d)
+	return resourceCockroachSQLDatabaseReadImpl(ctx, db, d)
 }
 
-func setDBOwner(db *DBConnection, d *schema.ResourceData) error {
+func setDBOwner(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	if !d.HasChange(dbOwnerAttr) {
 		return nil
 	}
@@ -277,27 +278,27 @@ func setDBOwner(db *DBConnection, d *schema.ResourceData) error {
 	}
 	currentUser := db.client.config.getDatabaseUsername()
 
-	ownerGranted, err := grantRoleMembership(db, owner, currentUser)
+	ownerGranted, err := grantRoleMembership(ctx, db, owner, currentUser)
 	if err != nil {
 		return err
 	}
 	if ownerGranted {
 		defer func() {
-			_, _ = revokeRoleMembership(db, owner, currentUser)
+			_, _ = revokeRoleMembership(ctx, db, owner, currentUser)
 		}()
 	}
 
 	dbName := d.Get(dbNameAttr).(string)
 
 	query := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", pq.QuoteIdentifier(dbName), pq.QuoteIdentifier(owner))
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("error updating database OWNER: %w", err)
 	}
 
 	return nil
 }
 
-func terminateBConnections(db *DBConnection, dbName string) error {
+func terminateBConnections(ctx context.Context, db *DBConnection, dbName string) error {
 	// CockroachDB handles concurrency via its serializable transaction isolation level.
 	// Terminating connections is not explicitly required for DROP DATABASE.
 	return nil
