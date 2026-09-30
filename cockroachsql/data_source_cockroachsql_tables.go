@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -92,13 +93,13 @@ func dataSourceCockroachSQLDatabaseTables() *schema.Resource {
 	}
 }
 
-func dataSourceCockroachSQLTablesRead(db *DBConnection, d *schema.ResourceData) error {
+func dataSourceCockroachSQLTablesRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	database := d.Get("database").(string)
 
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -110,7 +111,7 @@ func dataSourceCockroachSQLTablesRead(db *DBConnection, d *schema.ResourceData) 
 
 	query = applyTableDataSourceQueryFilters(query, queryConcatKeyword, d)
 
-	rows, err := conn.Query(query)
+	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -131,6 +132,9 @@ func dataSourceCockroachSQLTablesRead(db *DBConnection, d *schema.ResourceData) 
 		result["schema_name"] = schema_name
 		result["table_type"] = table_type
 		tables = append(tables, result)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read tables for database: %w", err)
 	}
 
 	d.Set("tables", tables)

@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -32,7 +33,7 @@ func testCheckCompatibleVersion(t *testing.T, feature featureName) {
 		// Initialize the provider if it's not yet configured
 		config := getTestConfig(t)
 		client := config.NewClient(getTestDatabaseName())
-		db, err := client.Connect()
+		db, err := client.Connect(context.Background())
 		if err != nil {
 			t.Fatalf("could connect to database: %v", err)
 		}
@@ -42,7 +43,7 @@ func testCheckCompatibleVersion(t *testing.T, feature featureName) {
 		return
 	}
 	client := meta.(*Client)
-	db, err := client.Connect()
+	db, err := client.Connect(context.Background())
 	if err != nil {
 		t.Fatalf("could connect to database: %v", err)
 	}

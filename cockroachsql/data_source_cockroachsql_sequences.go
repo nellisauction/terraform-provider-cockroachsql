@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -84,13 +85,13 @@ func dataSourceCockroachSQLDatabaseSequences() *schema.Resource {
 	}
 }
 
-func dataSourceCockroachSQLSequencesRead(db *DBConnection, d *schema.ResourceData) error {
+func dataSourceCockroachSQLSequencesRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	database := d.Get("database").(string)
 
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -102,7 +103,7 @@ func dataSourceCockroachSQLSequencesRead(db *DBConnection, d *schema.ResourceDat
 
 	query = applySequenceDataSourceQueryFilters(query, queryConcatKeyword, d)
 
-	rows, err := conn.Query(query)
+	rows, err := conn.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -123,6 +124,9 @@ func dataSourceCockroachSQLSequencesRead(db *DBConnection, d *schema.ResourceDat
 		result["schema_name"] = schema_name
 		result["data_type"] = data_type
 		sequences = append(sequences, result)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read sequences for database: %w", err)
 	}
 
 	d.Set("sequences", sequences)

@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -138,7 +139,7 @@ func testAccCheckCockroachSQLSchemaDestroy(s *terraform.State) error {
 			continue
 		}
 
-		db, err := client.Connect()
+		db, err := client.Connect(context.Background())
 		if err != nil {
 			return err
 		}
@@ -176,7 +177,7 @@ func testAccCheckCockroachSQLSchemaExistsWithDatabase(n, schemaName, dbName stri
 
 		// Use a dedicated connection for the specific database
 		targetClient := client.config.NewClient(dbName)
-		db, err := targetClient.Connect()
+		db, err := targetClient.Connect(context.Background())
 		if err != nil {
 			return err
 		}

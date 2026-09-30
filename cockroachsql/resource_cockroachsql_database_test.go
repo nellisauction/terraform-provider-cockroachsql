@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -131,12 +132,12 @@ func testAccCheckCockroachSQLDatabaseDestroy(s *terraform.State) error {
 			continue
 		}
 
-		db, err := client.Connect()
+		db, err := client.Connect(context.Background())
 		if err != nil {
 			return err
 		}
 
-		exists, err := dbExists(db, rs.Primary.ID)
+		exists, err := dbExists(context.Background(), db, rs.Primary.ID)
 		if err != nil {
 			return err
 		}
@@ -161,12 +162,12 @@ func testAccCheckCockroachSQLDatabaseExists(n string) resource.TestCheckFunc {
 		}
 
 		client := testAccProvider.Meta().(*Client)
-		db, err := client.Connect()
+		db, err := client.Connect(context.Background())
 		if err != nil {
 			return err
 		}
 
-		exists, err := dbExists(db, rs.Primary.ID)
+		exists, err := dbExists(context.Background(), db, rs.Primary.ID)
 		if err != nil {
 			return err
 		}

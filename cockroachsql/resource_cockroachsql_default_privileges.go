@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -86,7 +87,7 @@ func resourceCockroachSQLDefaultPrivileges() *schema.Resource {
 	}
 }
 
-func resourceCockroachSQLDefaultPrivilegesRead(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLDefaultPrivilegesRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	pgSchema := d.Get("schema").(string)
 	objectType := d.Get("object_type").(string)
 	database := d.Get("database").(string)
@@ -107,7 +108,7 @@ func resourceCockroachSQLDefaultPrivilegesRead(db *DBConnection, d *schema.Resou
 
 	// Connect to the target database
 	targetClient := db.client.config.NewClient(database)
-	targetConn, err := targetClient.Connect()
+	targetConn, err := targetClient.Connect(ctx)
 	if err != nil {
 		// If DB doesn't exist, the resource doesn't exist
 		if strings.Contains(err.Error(), "does not exist") {
@@ -117,10 +118,10 @@ func resourceCockroachSQLDefaultPrivilegesRead(db *DBConnection, d *schema.Resou
 		return err
 	}
 
-	return readRoleDefaultPrivileges(targetConn.DB, d)
+	return readRoleDefaultPrivileges(ctx, targetConn.DB, d)
 }
 
-func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLDefaultPrivilegesCreate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	pgSchema := d.Get("schema").(string)
 	objectType := d.Get("object_type").(string)
 	forAllRoles := d.Get("for_all_roles").(bool)
@@ -160,7 +161,7 @@ func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.Res
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -173,14 +174,14 @@ func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.Res
 	}
 
 	// Needed in order to set the owner of the db if the connection user is not a superuser
-	if err := withRolesGranted(conn, rolesToGrant, func() error {
+	if err := withRolesGranted(ctx, conn, rolesToGrant, func() error {
 
 		// Revoke all privileges before granting otherwise reducing privileges will not work.
-		if err := revokeRoleDefaultPrivileges(conn, d); err != nil {
+		if err := revokeRoleDefaultPrivileges(ctx, conn, d); err != nil {
 			return err
 		}
 
-		if err := grantRoleDefaultPrivileges(conn, d); err != nil {
+		if err := grantRoleDefaultPrivileges(ctx, conn, d); err != nil {
 			return err
 		}
 		return nil
@@ -190,10 +191,10 @@ func resourceCockroachSQLDefaultPrivilegesCreate(db *DBConnection, d *schema.Res
 
 	d.SetId(generateDefaultPrivilegesID(d))
 
-	return readRoleDefaultPrivileges(conn, d)
+	return readRoleDefaultPrivileges(ctx, conn, d)
 }
 
-func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLDefaultPrivilegesDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	forAllRoles := d.Get("for_all_roles").(bool)
 	owner := d.Get("owner").(string)
 	pgSchema := d.Get("schema").(string)
@@ -211,7 +212,7 @@ func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.Res
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -224,8 +225,8 @@ func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.Res
 	}
 
 	// Needed in order to set the owner of the db if the connection user is not a superuser
-	if err := withRolesGranted(conn, rolesToGrant, func() error {
-		return revokeRoleDefaultPrivileges(conn, d)
+	if err := withRolesGranted(ctx, conn, rolesToGrant, func() error {
+		return revokeRoleDefaultPrivileges(ctx, conn, d)
 	}); err != nil {
 		return err
 	}
@@ -233,7 +234,7 @@ func resourceCockroachSQLDefaultPrivilegesDelete(db *DBConnection, d *schema.Res
 	return nil
 }
 
-func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
+func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	role := d.Get("role").(string)
 	forAllRoles := d.Get("for_all_roles").(bool)
 	owner := d.Get("owner").(string)
@@ -254,7 +255,7 @@ func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 		query += fmt.Sprintf(" IN SCHEMA %s", pq.QuoteIdentifier(pgSchema))
 	}
 
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("could not read default privileges: %w", err)
 	}
@@ -303,6 +304,9 @@ func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 			privileges = append(privileges, strings.ToUpper(r_privilege_type))
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("could not read default privileges: %w", err)
+	}
 
 	// We consider no privileges as "not exists" unless no privileges were provided as input
 	if len(privileges) == 0 {
@@ -323,7 +327,7 @@ func readRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 	return nil
 }
 
-func grantRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
+func grantRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	role := d.Get("role").(string)
 	forAllRoles := d.Get("for_all_roles").(bool)
 	owner := d.Get("owner").(string)
@@ -362,7 +366,7 @@ func grantRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 		query = query + " WITH GRANT OPTION"
 	}
 
-	_, err := db.Exec(query)
+	_, err := db.ExecContext(ctx, query)
 	if err != nil {
 		return fmt.Errorf("could not alter default privileges (SQL: %s): %w", query, err)
 	}
@@ -370,7 +374,7 @@ func grantRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 	return nil
 }
 
-func revokeRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
+func revokeRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	forAllRoles := d.Get("for_all_roles").(bool)
 	owner := d.Get("owner").(string)
 	pgSchema := d.Get("schema").(string)
@@ -394,7 +398,7 @@ func revokeRoleDefaultPrivileges(db QueryAble, d *schema.ResourceData) error {
 		pq.QuoteIdentifier(d.Get("role").(string)),
 	)
 
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("could not revoke default privileges (SQL: %s): %w", query, err)
 	}
 	return nil

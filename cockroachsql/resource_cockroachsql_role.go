@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
@@ -180,7 +181,7 @@ func resourceCockroachSQLRole() *schema.Resource {
 	}
 }
 
-func resourceCockroachSQLRoleCreate(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLRoleCreate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	var stringOpts []struct {
 		hclKey string
 		sqlKey string
@@ -288,47 +289,47 @@ func resourceCockroachSQLRoleCreate(db *DBConnection, d *schema.ResourceData) er
 
 	stmt := fmt.Sprintf("CREATE ROLE %s%s", pq.QuoteIdentifier(roleName), createStr)
 
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("error creating role %s (SQL: %s): %w", roleName, stmt, err)
 	}
 
-	if err := grantRoles(db, d); err != nil {
+	if err := grantRoles(ctx, db, d); err != nil {
 		return err
 	}
 
-	if err := alterSearchPath(db, d); err != nil {
+	if err := alterSearchPath(ctx, db, d); err != nil {
 		return err
 	}
 
 	// Small delay to ensure CRDB propagates settings to pg_roles
 	time.Sleep(100 * time.Millisecond)
 
-	if err := setStatementTimeout(db, d); err != nil {
+	if err := setStatementTimeout(ctx, db, d); err != nil {
 		return err
 	}
 
 	time.Sleep(100 * time.Millisecond)
 
-	if err := setIdleInTransactionSessionTimeout(db, d); err != nil {
+	if err := setIdleInTransactionSessionTimeout(ctx, db, d); err != nil {
 		return err
 	}
 
 	d.SetId(roleName)
 
-	return resourceCockroachSQLRoleReadImpl(db, d)
+	return resourceCockroachSQLRoleReadImpl(ctx, db, d)
 }
 
-func resourceCockroachSQLRoleDelete(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLRoleDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	roleName := d.Get(roleNameAttr).(string)
 
 	if !d.Get(roleSkipReassignOwnedAttr).(bool) {
-		if err := withRolesGranted(db, []string{roleName}, func() error {
+		if err := withRolesGranted(ctx, db, []string{roleName}, func() error {
 			currentUser := db.client.config.getDatabaseUsername()
-			if _, err := db.Exec(fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(currentUser))); err != nil {
+			if _, err := db.ExecContext(ctx, fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(currentUser))); err != nil {
 				return fmt.Errorf("could not reassign owned by role %s to %s: %w", roleName, currentUser, err)
 			}
 
-			if _, err := db.Exec(fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName))); err != nil {
+			if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName))); err != nil {
 				return fmt.Errorf("could not drop owned by role %s: %w", roleName, err)
 			}
 			return nil
@@ -337,7 +338,7 @@ func resourceCockroachSQLRoleDelete(db *DBConnection, d *schema.ResourceData) er
 		}
 	}
 	if !d.Get(roleSkipDropRoleAttr).(bool) {
-		if _, err := db.Exec(fmt.Sprintf("DROP ROLE %s", pq.QuoteIdentifier(roleName))); err != nil {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP ROLE %s", pq.QuoteIdentifier(roleName))); err != nil {
 			return fmt.Errorf("could not delete role %s: %w", roleName, err)
 		}
 	}
@@ -347,9 +348,9 @@ func resourceCockroachSQLRoleDelete(db *DBConnection, d *schema.ResourceData) er
 	return nil
 }
 
-func resourceCockroachSQLRoleExists(db *DBConnection, d *schema.ResourceData) (bool, error) {
+func resourceCockroachSQLRoleExists(ctx context.Context, db *DBConnection, d *schema.ResourceData) (bool, error) {
 	var roleName string
-	err := db.QueryRow("SELECT rolname FROM pg_catalog.pg_roles WHERE rolname=$1", d.Id()).Scan(&roleName)
+	err := db.QueryRowContext(ctx, "SELECT rolname FROM pg_catalog.pg_roles WHERE rolname=$1", d.Id()).Scan(&roleName)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -360,8 +361,8 @@ func resourceCockroachSQLRoleExists(db *DBConnection, d *schema.ResourceData) (b
 	return true, nil
 }
 
-func resourceCockroachSQLRoleRead(db *DBConnection, d *schema.ResourceData) error {
-	exists, err := resourceCockroachSQLRoleExists(db, d)
+func resourceCockroachSQLRoleRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	exists, err := resourceCockroachSQLRoleExists(ctx, db, d)
 	if err != nil {
 		return err
 	}
@@ -370,10 +371,10 @@ func resourceCockroachSQLRoleRead(db *DBConnection, d *schema.ResourceData) erro
 		return nil
 	}
 
-	return resourceCockroachSQLRoleReadImpl(db, d)
+	return resourceCockroachSQLRoleReadImpl(ctx, db, d)
 }
 
-func resourceCockroachSQLRoleReadImpl(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLRoleReadImpl(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	var roleCreateRole, roleCanLogin bool
 	var roleName, roleValidUntil string
 	var roleRoles, roleConfig []string
@@ -405,7 +406,7 @@ func resourceCockroachSQLRoleReadImpl(db *DBConnection, d *schema.ResourceData) 
 		WHERE rolname=$1`,
 		strings.Join(columns, ", "),
 	)
-	err := db.QueryRow(roleSQL, roleID).Scan(values...)
+	err := db.QueryRowContext(ctx, roleSQL, roleID).Scan(values...)
 
 	switch {
 	case err == sql.ErrNoRows:
@@ -440,7 +441,7 @@ func resourceCockroachSQLRoleReadImpl(db *DBConnection, d *schema.ResourceData) 
 	d.SetId(roleName)
 
 	if _, ok := d.GetOk(rolePasswordAttr); ok {
-		password, err := readRolePassword(db, d, roleCanLogin)
+		password, err := readRolePassword(ctx, db, d, roleCanLogin)
 		if err != nil {
 			return err
 		}
@@ -491,13 +492,13 @@ func readStatementTimeout(roleConfig []string) (int, error) {
 	return 0, nil
 }
 
-func readRolePassword(db *DBConnection, d *schema.ResourceData, roleCanLogin bool) (string, error) {
+func readRolePassword(ctx context.Context, db *DBConnection, d *schema.ResourceData, roleCanLogin bool) (string, error) {
 	statePassword := d.Get(rolePasswordAttr).(string)
 	if !roleCanLogin || !db.client.config.Superuser {
 		return statePassword, nil
 	}
 
-	superuser, err := db.isSuperuser()
+	superuser, err := db.isSuperuser(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -506,7 +507,7 @@ func readRolePassword(db *DBConnection, d *schema.ResourceData, roleCanLogin boo
 	}
 
 	var rolePassword string
-	err = db.QueryRow("SELECT COALESCE(passwd, '') FROM pg_catalog.pg_shadow AS s WHERE s.usename = $1", d.Id()).Scan(&rolePassword)
+	err = db.QueryRowContext(ctx, "SELECT COALESCE(passwd, '') FROM pg_catalog.pg_shadow AS s WHERE s.usename = $1", d.Id()).Scan(&rolePassword)
 	switch {
 	case err == sql.ErrNoRows:
 		return "", nil
@@ -532,39 +533,39 @@ func readRolePassword(db *DBConnection, d *schema.ResourceData, roleCanLogin boo
 	return rolePassword, nil
 }
 
-func resourceCockroachSQLRoleUpdate(db *DBConnection, d *schema.ResourceData) error {
-	if err := setRolePassword(db, d); err != nil {
+func resourceCockroachSQLRoleUpdate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if err := setRolePassword(ctx, db, d); err != nil {
 		return err
 	}
-	if err := setRoleCreateRole(db, d); err != nil {
+	if err := setRoleCreateRole(ctx, db, d); err != nil {
 		return err
 	}
-	if err := setRoleLogin(db, d); err != nil {
+	if err := setRoleLogin(ctx, db, d); err != nil {
 		return err
 	}
-	if err := setRoleValidUntil(db, d); err != nil {
+	if err := setRoleValidUntil(ctx, db, d); err != nil {
 		return err
 	}
-	if err := revokeRoles(db, d); err != nil {
+	if err := revokeRoles(ctx, db, d); err != nil {
 		return err
 	}
-	if err := grantRoles(db, d); err != nil {
+	if err := grantRoles(ctx, db, d); err != nil {
 		return err
 	}
-	if err := alterSearchPath(db, d); err != nil {
+	if err := alterSearchPath(ctx, db, d); err != nil {
 		return err
 	}
-	if err := setStatementTimeout(db, d); err != nil {
+	if err := setStatementTimeout(ctx, db, d); err != nil {
 		return err
 	}
-	if err := setIdleInTransactionSessionTimeout(db, d); err != nil {
+	if err := setIdleInTransactionSessionTimeout(ctx, db, d); err != nil {
 		return err
 	}
 
-	return resourceCockroachSQLRoleReadImpl(db, d)
+	return resourceCockroachSQLRoleReadImpl(ctx, db, d)
 }
 
-func setRolePassword(db QueryAble, d *schema.ResourceData) error {
+func setRolePassword(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	if _, ok := getWO(d, rolePasswordWOAttr); ok {
 		if !d.HasChange(rolePasswordWOVersionAttr) {
 			return nil
@@ -587,13 +588,13 @@ func setRolePassword(db QueryAble, d *schema.ResourceData) error {
 	}
 
 	stmt := fmt.Sprintf("ALTER ROLE %s PASSWORD '%s'", pq.QuoteIdentifier(roleName), pqQuoteLiteral(password))
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("error updating role password: %w", err)
 	}
 	return nil
 }
 
-func setRoleCreateRole(db QueryAble, d *schema.ResourceData) error {
+func setRoleCreateRole(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	if !d.HasChange(roleCreateRoleAttr) {
 		return nil
 	}
@@ -604,13 +605,13 @@ func setRoleCreateRole(db QueryAble, d *schema.ResourceData) error {
 	}
 	roleName := d.Get(roleNameAttr).(string)
 	stmt := fmt.Sprintf("ALTER ROLE %s WITH %s", pq.QuoteIdentifier(roleName), tok)
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("error updating role CREATEROLE: %w", err)
 	}
 	return nil
 }
 
-func setRoleLogin(db QueryAble, d *schema.ResourceData) error {
+func setRoleLogin(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	if !d.HasChange(roleLoginAttr) {
 		return nil
 	}
@@ -621,13 +622,13 @@ func setRoleLogin(db QueryAble, d *schema.ResourceData) error {
 	}
 	roleName := d.Get(roleNameAttr).(string)
 	stmt := fmt.Sprintf("ALTER ROLE %s WITH %s", pq.QuoteIdentifier(roleName), tok)
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("error updating role LOGIN: %w", err)
 	}
 	return nil
 }
 
-func setRoleValidUntil(db QueryAble, d *schema.ResourceData) error {
+func setRoleValidUntil(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	if !d.HasChange(roleValidUntilAttr) {
 		return nil
 	}
@@ -637,16 +638,16 @@ func setRoleValidUntil(db QueryAble, d *schema.ResourceData) error {
 	}
 	roleName := d.Get(roleNameAttr).(string)
 	stmt := fmt.Sprintf("ALTER ROLE %s VALID UNTIL '%s'", pq.QuoteIdentifier(roleName), pqQuoteLiteral(validUntil))
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("error updating role VALID UNTIL: %w", err)
 	}
 	return nil
 }
 
-func revokeRoles(db QueryAble, d *schema.ResourceData) error {
+func revokeRoles(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	role := d.Get(roleNameAttr).(string)
 	query := `SELECT pg_get_userbyid(roleid) FROM pg_catalog.pg_auth_members members JOIN pg_catalog.pg_roles ON members.member = pg_roles.oid WHERE rolname = $1`
-	rows, err := db.Query(query, role)
+	rows, err := db.QueryContext(ctx, query, role)
 	if err != nil {
 		return fmt.Errorf("could not get roles list: %w", err)
 	}
@@ -660,28 +661,31 @@ func revokeRoles(db QueryAble, d *schema.ResourceData) error {
 		}
 		grantedRoles = append(grantedRoles, grantedRole)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	for _, grantedRole := range grantedRoles {
 		query = fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(grantedRole), pq.QuoteIdentifier(role))
-		if _, err := db.Exec(query); err != nil {
+		if _, err := db.ExecContext(ctx, query); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func grantRoles(db QueryAble, d *schema.ResourceData) error {
+func grantRoles(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	role := d.Get(roleNameAttr).(string)
 	for _, grantingRole := range d.Get("roles").(*schema.Set).List() {
 		query := fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(grantingRole.(string)), pq.QuoteIdentifier(role))
-		if _, err := db.Exec(query); err != nil {
+		if _, err := db.ExecContext(ctx, query); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func alterSearchPath(db QueryAble, d *schema.ResourceData) error {
+func alterSearchPath(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	role := d.Get(roleNameAttr).(string)
 	searchPathInterface := d.Get(roleSearchPathAttr).([]any)
 	var searchPath string
@@ -695,40 +699,40 @@ func alterSearchPath(db QueryAble, d *schema.ResourceData) error {
 		searchPath = "DEFAULT"
 	}
 	query := fmt.Sprintf("ALTER ROLE %s SET search_path TO %s", pq.QuoteIdentifier(role), searchPath)
-	if _, err := db.Exec(query); err != nil {
+	if _, err := db.ExecContext(ctx, query); err != nil {
 		return err
 	}
 	return nil
 }
 
-func setStatementTimeout(db QueryAble, d *schema.ResourceData) error {
+func setStatementTimeout(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	roleName := d.Get(roleNameAttr).(string)
 	statementTimeout := d.Get(roleStatementTimeoutAttr).(int)
 	if statementTimeout != 0 {
 		stmt := fmt.Sprintf("ALTER ROLE %s SET statement_timeout TO %d", pq.QuoteIdentifier(roleName), statementTimeout)
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	} else if d.HasChange(roleStatementTimeoutAttr) {
 		stmt := fmt.Sprintf("ALTER ROLE %s RESET statement_timeout", pq.QuoteIdentifier(roleName))
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func setIdleInTransactionSessionTimeout(db QueryAble, d *schema.ResourceData) error {
+func setIdleInTransactionSessionTimeout(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	roleName := d.Get(roleNameAttr).(string)
 	idleTimeout := d.Get(roleIdleInTransactionSessionTimeoutAttr).(int)
 	if idleTimeout != 0 {
 		stmt := fmt.Sprintf("ALTER ROLE %s SET idle_in_transaction_session_timeout TO %d", pq.QuoteIdentifier(roleName), idleTimeout)
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	} else if d.HasChange(roleIdleInTransactionSessionTimeoutAttr) {
 		stmt := fmt.Sprintf("ALTER ROLE %s RESET idle_in_transaction_session_timeout", pq.QuoteIdentifier(roleName))
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}

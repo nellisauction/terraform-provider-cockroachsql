@@ -7,30 +7,31 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/lib/pq"
 )
 
-func ResourceFunc(fn func(*DBConnection, *schema.ResourceData) error) func(context.Context, *schema.ResourceData, any) diag.Diagnostics {
-	return func(_ context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
+func ResourceFunc(fn func(context.Context, *DBConnection, *schema.ResourceData) error) func(context.Context, *schema.ResourceData, any) diag.Diagnostics {
+	return func(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
 		client := meta.(*Client)
 
-		db, err := client.Connect()
+		db, err := client.Connect(ctx)
 		if err != nil {
 			return diag.FromErr(err)
 		}
 
-		return diag.FromErr(fn(db, d))
+		return diag.FromErr(fn(ctx, db, d))
 	}
 }
 
 // QueryAble is a DB connection (sql.DB/Tx)
 type QueryAble interface {
-	Exec(query string, args ...any) (sql.Result, error)
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // pqQuoteLiteral returns a string literal safe for inclusion in a CockroachSQL
@@ -43,11 +44,11 @@ func pqQuoteLiteral(in string) string {
 	return in
 }
 
-func isMemberOfRole(db QueryAble, role, member string) (bool, error) {
+func isMemberOfRole(ctx context.Context, db QueryAble, role, member string) (bool, error) {
 	var _rez int
 	setOption := true
 
-	err := db.QueryRow(
+	err := db.QueryRowContext(ctx,
 		"SELECT 1 FROM information_schema.columns WHERE table_name='pg_auth_members' AND column_name = 'set_option'",
 	).Scan(&_rez)
 
@@ -63,7 +64,7 @@ func isMemberOfRole(db QueryAble, role, member string) (bool, error) {
 		query += " AND set_option"
 	}
 
-	err = db.QueryRow(query, role, member).Scan(&_rez)
+	err = db.QueryRowContext(ctx, query, role, member).Scan(&_rez)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -77,12 +78,12 @@ func isMemberOfRole(db QueryAble, role, member string) (bool, error) {
 // grantRoleMembership grants the role *role* to the user *member*.
 // It returns false if the grant is not needed because the user is already
 // a member of this role.
-func grantRoleMembership(db QueryAble, role, member string) (bool, error) {
+func grantRoleMembership(ctx context.Context, db QueryAble, role, member string) (bool, error) {
 	if member == role {
 		return false, nil
 	}
 
-	isMember, err := isMemberOfRole(db, role, member)
+	isMember, err := isMemberOfRole(ctx, db, role, member)
 	if err != nil {
 		return false, err
 	}
@@ -95,7 +96,7 @@ func grantRoleMembership(db QueryAble, role, member string) (bool, error) {
 	log.Printf("grantRoleMembership: granting %s to %s", role, member)
 
 	stmt := fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(member))
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return false, fmt.Errorf("error granting role %s to %s: %w", role, member, err)
 	}
 	return true, nil
@@ -103,12 +104,12 @@ func grantRoleMembership(db QueryAble, role, member string) (bool, error) {
 
 // revokeRoleMembership revokes the role *role* from the user *member*.
 // It returns false if the revoke is not needed because the user is not a member of this role.
-func revokeRoleMembership(db QueryAble, role, member string) (bool, error) {
+func revokeRoleMembership(ctx context.Context, db QueryAble, role, member string) (bool, error) {
 	if member == role {
 		return false, nil
 	}
 
-	isMember, err := isMemberOfRole(db, role, member)
+	isMember, err := isMemberOfRole(ctx, db, role, member)
 	if err != nil {
 		return false, err
 	}
@@ -119,7 +120,7 @@ func revokeRoleMembership(db QueryAble, role, member string) (bool, error) {
 	log.Printf("revokeRoleMembership: Revoke %s from %s", role, member)
 
 	stmt := fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(member))
-	if _, err := db.Exec(stmt); err != nil {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return false, fmt.Errorf("error revoking role %s from %s: %w", role, member, err)
 	}
 	return true, nil
@@ -128,35 +129,42 @@ func revokeRoleMembership(db QueryAble, role, member string) (bool, error) {
 // withRolesGranted temporarily grants, if needed, the roles specified to connected user
 // (i.e.: the admin configure in the provider) and revoke them as soon as the
 // callback func has finished.
-func withRolesGranted(db QueryAble, roles []string, fn func() error) error {
-	currentUser, err := getCurrentUser(db)
+func withRolesGranted(ctx context.Context, db QueryAble, roles []string, fn func() error) error {
+	currentUser, err := getCurrentUser(ctx, db)
 	if err != nil {
 		return err
 	}
 
 	grantedRoles := []string{}
+	defer func() {
+		if len(grantedRoles) == 0 {
+			return
+		}
+		cleanupCtx, cancel := cleanupContext(ctx)
+		defer cancel()
+		for _, role := range grantedRoles {
+			if _, err := db.ExecContext(cleanupCtx, fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
+				log.Printf("[ERR] could not revoke role %s from %s: %v", role, currentUser, err)
+			}
+		}
+	}()
+
 	for _, role := range roles {
 		if role == "" || role == currentUser {
 			continue
 		}
 
-		if _, err := db.Exec(fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
 			return fmt.Errorf("could not grant role %s to %s: %w", role, currentUser, err)
 		}
 		grantedRoles = append(grantedRoles, role)
 	}
 
-	if len(grantedRoles) > 0 {
-		defer func() {
-			for _, role := range grantedRoles {
-				if _, err := db.Exec(fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
-					log.Printf("[ERR] could not revoke role %s from %s: %v", role, currentUser, err)
-				}
-			}
-		}()
-	}
-
 	return fn()
+}
+
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 }
 
 func sliceContainsStr(haystack []string, needle string) bool {
@@ -290,8 +298,8 @@ func setToPgIdentSimpleList(idents *schema.Set) string {
 	return strings.Join(quotedIdents, ",")
 }
 
-func dbExists(db QueryAble, dbname string) (bool, error) {
-	err := db.QueryRow("SELECT datname FROM pg_database WHERE datname=$1", dbname).Scan(&dbname)
+func dbExists(ctx context.Context, db QueryAble, dbname string) (bool, error) {
+	err := db.QueryRowContext(ctx, "SELECT datname FROM pg_database WHERE datname=$1", dbname).Scan(&dbname)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -302,8 +310,8 @@ func dbExists(db QueryAble, dbname string) (bool, error) {
 	return true, nil
 }
 
-func roleExists(db QueryAble, rolname string) (bool, error) {
-	err := db.QueryRow("SELECT 1 FROM pg_roles WHERE rolname=$1", rolname).Scan(&rolname)
+func roleExists(ctx context.Context, db QueryAble, rolname string) (bool, error) {
+	err := db.QueryRowContext(ctx, "SELECT 1 FROM pg_roles WHERE rolname=$1", rolname).Scan(&rolname)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -314,8 +322,8 @@ func roleExists(db QueryAble, rolname string) (bool, error) {
 	return true, nil
 }
 
-func schemaExists(db QueryAble, schemaname string) (bool, error) {
-	err := db.QueryRow("SELECT 1 FROM pg_namespace WHERE nspname=$1", schemaname).Scan(&schemaname)
+func schemaExists(ctx context.Context, db QueryAble, schemaname string) (bool, error) {
+	err := db.QueryRowContext(ctx, "SELECT 1 FROM pg_namespace WHERE nspname=$1", schemaname).Scan(&schemaname)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -326,9 +334,9 @@ func schemaExists(db QueryAble, schemaname string) (bool, error) {
 	return true, nil
 }
 
-func getCurrentUser(db QueryAble) (string, error) {
+func getCurrentUser(ctx context.Context, db QueryAble) (string, error) {
 	var currentUser string
-	err := db.QueryRow("SELECT CURRENT_USER").Scan(&currentUser)
+	err := db.QueryRowContext(ctx, "SELECT CURRENT_USER").Scan(&currentUser)
 	switch {
 	case err == sql.ErrNoRows:
 		return "", fmt.Errorf("SELECT CURRENT_USER returns now row, this is quite disturbing")
@@ -346,7 +354,7 @@ func getDatabase(d *schema.ResourceData, databaseName string) string {
 	return databaseName
 }
 
-func getDatabaseOwner(db QueryAble, database string) (string, error) {
+func getDatabaseOwner(ctx context.Context, db QueryAble, database string) (string, error) {
 	dbQueryString := "$1"
 	dbQueryValues := []any{database}
 
@@ -364,7 +372,7 @@ SELECT rolname
 `, dbQueryString)
 	var owner string
 
-	err := db.QueryRow(query, dbQueryValues...).Scan(&owner)
+	err := db.QueryRowContext(ctx, query, dbQueryValues...).Scan(&owner)
 	switch {
 	case err == sql.ErrNoRows:
 		return "", fmt.Errorf("could not find database '%s' while looking for owner", database)
@@ -374,7 +382,7 @@ SELECT rolname
 	return owner, nil
 }
 
-func getSchemaOwner(db QueryAble, schemaName string) (string, error) {
+func getSchemaOwner(ctx context.Context, db QueryAble, schemaName string) (string, error) {
 	query := `
 SELECT rolname
   FROM pg_namespace
@@ -383,7 +391,7 @@ SELECT rolname
 `
 	var owner string
 
-	err := db.QueryRow(query, schemaName).Scan(&owner)
+	err := db.QueryRowContext(ctx, query, schemaName).Scan(&owner)
 	switch {
 	case err == sql.ErrNoRows:
 		return "", fmt.Errorf("could not find schema '%s' while looking for owner", schemaName)
@@ -394,8 +402,8 @@ SELECT rolname
 }
 
 // getTablesOwner retrieves all the owners for all the tables in the specified schema.
-func getTablesOwner(db QueryAble, schemaName string) ([]string, error) {
-	rows, err := db.Query(
+func getTablesOwner(ctx context.Context, db QueryAble, schemaName string) ([]string, error) {
+	rows, err := db.QueryContext(ctx,
 		"SELECT DISTINCT tableowner FROM pg_tables WHERE schemaname = $1",
 		schemaName,
 	)
@@ -412,16 +420,19 @@ func getTablesOwner(db QueryAble, schemaName string) ([]string, error) {
 		}
 		owners = append(owners, owner)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("could not read tables owners: %w", err)
+	}
 
 	return owners, nil
 }
 
-func resolveOwners(db QueryAble, owners []string) ([]string, error) {
+func resolveOwners(ctx context.Context, db QueryAble, owners []string) ([]string, error) {
 	resolvedOwners := []string{}
 	for _, owner := range owners {
 		if owner == "pg_database_owner" {
 			var err error
-			owner, err = getDatabaseOwner(db, "")
+			owner, err = getDatabaseOwner(ctx, db, "")
 			if err != nil {
 				return nil, err
 			}
@@ -433,6 +444,8 @@ func resolveOwners(db QueryAble, owners []string) ([]string, error) {
 }
 
 const publicRole = "public"
+
+const cleanupTimeout = 30 * time.Second
 
 func findStringSubmatchMap(expression string, text string) map[string]string {
 

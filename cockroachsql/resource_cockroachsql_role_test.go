@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"reflect"
@@ -125,12 +126,12 @@ func testAccCheckCockroachSQLRoleDestroy(s *terraform.State) error {
 			continue
 		}
 
-		db, err := client.Connect()
+		db, err := client.Connect(context.Background())
 		if err != nil {
 			return err
 		}
 
-		exists, err := checkRoleExists(db, rs.Primary.ID)
+		exists, err := checkRoleExists(context.Background(), db, rs.Primary.ID)
 
 		if err != nil {
 			return fmt.Errorf("error checking role %s", err)
@@ -148,12 +149,12 @@ func testAccCheckCockroachSQLRoleExists(roleName string, expectedRoles []string,
 	return func(s *terraform.State) error {
 		client := testAccProvider.Meta().(*Client)
 
-		db, err := client.Connect()
+		db, err := client.Connect(context.Background())
 		if err != nil {
 			return err
 		}
 
-		exists, err := checkRoleExists(db, roleName)
+		exists, err := checkRoleExists(context.Background(), db, roleName)
 
 		if err != nil {
 			return fmt.Errorf("error checking role %s", err)
@@ -179,9 +180,9 @@ func testAccCheckCockroachSQLRoleExists(roleName string, expectedRoles []string,
 	}
 }
 
-func checkRoleExists(db QueryAble, roleName string) (bool, error) {
+func checkRoleExists(ctx context.Context, db QueryAble, roleName string) (bool, error) {
 	var _rez bool
-	err := db.QueryRow("SELECT TRUE FROM pg_catalog.pg_roles WHERE rolname=$1", roleName).Scan(&_rez)
+	err := db.QueryRowContext(ctx, "SELECT TRUE FROM pg_catalog.pg_roles WHERE rolname=$1", roleName).Scan(&_rez)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -193,7 +194,7 @@ func checkRoleExists(db QueryAble, roleName string) (bool, error) {
 }
 
 func checkGrantedRoles(client *Client, roleName string, expectedRoles []string) error {
-	db, err := client.Connect()
+	db, err := client.Connect(context.Background())
 	if err != nil {
 		return err
 	}
@@ -227,7 +228,7 @@ func checkGrantedRoles(client *Client, roleName string, expectedRoles []string) 
 }
 
 func checkSearchPath(client *Client, roleName string, expectedSearchPath []string) error {
-	db, err := client.Connect()
+	db, err := client.Connect(context.Background())
 	if err != nil {
 		return err
 	}

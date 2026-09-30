@@ -1,6 +1,7 @@
 package cockroachsql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -94,14 +95,14 @@ func resourceCockroachSQLGrant() *schema.Resource {
 	}
 }
 
-func resourceCockroachSQLGrantRead(db *DBConnection, d *schema.ResourceData) error {
-	if err := validateFeatureSupport(db, d); err != nil {
+func resourceCockroachSQLGrantRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if err := validateFeatureSupport(ctx, db, d); err != nil {
 		return fmt.Errorf("feature is not supported: %v", err)
 	}
 
 	database := d.Get("database").(string)
 	targetClient := db.client.config.NewClient(database)
-	targetConn, err := targetClient.Connect()
+	targetConn, err := targetClient.Connect(ctx)
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			d.SetId("")
@@ -110,7 +111,7 @@ func resourceCockroachSQLGrantRead(db *DBConnection, d *schema.ResourceData) err
 		return err
 	}
 
-	exists, err := checkRoleDBSchemaExists(targetConn.DB, d)
+	exists, err := checkRoleDBSchemaExists(ctx, targetConn.DB, d)
 	if err != nil {
 		return err
 	}
@@ -120,25 +121,25 @@ func resourceCockroachSQLGrantRead(db *DBConnection, d *schema.ResourceData) err
 	}
 	d.SetId(generateGrantID(d))
 
-	return readRolePrivileges(targetConn.DB, d)
+	return readRolePrivileges(ctx, targetConn.DB, d)
 }
 
-func resourceCockroachSQLGrantCreate(db *DBConnection, d *schema.ResourceData) error {
-	return resourceCockroachSQLGrantCreateOrUpdate(db, d, false)
+func resourceCockroachSQLGrantCreate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	return resourceCockroachSQLGrantCreateOrUpdate(ctx, db, d, false)
 }
 
-func resourceCockroachSQLGrantUpdate(db *DBConnection, d *schema.ResourceData) error {
-	return resourceCockroachSQLGrantCreateOrUpdate(db, d, true)
+func resourceCockroachSQLGrantUpdate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	return resourceCockroachSQLGrantCreateOrUpdate(ctx, db, d, true)
 }
 
-func resourceCockroachSQLGrantCreateOrUpdate(db *DBConnection, d *schema.ResourceData, usePrevious bool) error {
-	if err := validateFeatureSupport(db, d); err != nil {
+func resourceCockroachSQLGrantCreateOrUpdate(ctx context.Context, db *DBConnection, d *schema.ResourceData, usePrevious bool) error {
+	if err := validateFeatureSupport(ctx, db, d); err != nil {
 		return fmt.Errorf("feature is not supported: %v", err)
 	}
 
 	database := d.Get("database").(string)
 	targetClient := db.client.config.NewClient(database)
-	targetConn, err := targetClient.Connect()
+	targetConn, err := targetClient.Connect(ctx)
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,7 @@ func resourceCockroachSQLGrantCreateOrUpdate(db *DBConnection, d *schema.Resourc
 	objectType := d.Get("object_type").(string)
 	schemaName := d.Get("schema").(string)
 	if schemaName != "" && !sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, objectType) {
-		_, _ = targetConn.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pq.QuoteIdentifier(schemaName)))
+		_, _ = targetConn.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pq.QuoteIdentifier(schemaName)))
 	}
 
 	if d.Get("schema").(string) == "" && !sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, objectType) {
@@ -174,15 +175,15 @@ func resourceCockroachSQLGrantCreateOrUpdate(db *DBConnection, d *schema.Resourc
 		return err
 	}
 
-	owners, err := getRolesToGrant(targetConn, d)
+	owners, err := getRolesToGrant(ctx, targetConn, d)
 	if err != nil {
 		return err
 	}
-	if err := withRolesGranted(targetConn, owners, func() error {
-		if err := revokeRolePrivileges(targetConn, d, usePrevious); err != nil {
+	if err := withRolesGranted(ctx, targetConn, owners, func() error {
+		if err := revokeRolePrivileges(ctx, targetConn, d, usePrevious); err != nil {
 			return err
 		}
-		if err := grantRolePrivileges(targetConn, d); err != nil {
+		if err := grantRolePrivileges(ctx, targetConn, d); err != nil {
 			return err
 		}
 		return nil
@@ -192,28 +193,28 @@ func resourceCockroachSQLGrantCreateOrUpdate(db *DBConnection, d *schema.Resourc
 
 	d.SetId(generateGrantID(d))
 
-	return readRolePrivileges(targetConn.DB, d)
+	return readRolePrivileges(ctx, targetConn.DB, d)
 }
 
-func resourceCockroachSQLGrantDelete(db *DBConnection, d *schema.ResourceData) error {
-	if err := validateFeatureSupport(db, d); err != nil {
+func resourceCockroachSQLGrantDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if err := validateFeatureSupport(ctx, db, d); err != nil {
 		return fmt.Errorf("feature is not supported: %v", err)
 	}
 
 	database := d.Get("database").(string)
 	targetClient := db.client.config.NewClient(database)
-	targetConn, err := targetClient.Connect()
+	targetConn, err := targetClient.Connect(ctx)
 	if err != nil {
 		return err
 	}
 
-	owners, err := getRolesToGrant(targetConn, d)
+	owners, err := getRolesToGrant(ctx, targetConn, d)
 	if err != nil {
 		return err
 	}
 
-	if err := withRolesGranted(targetConn, owners, func() error {
-		return revokeRolePrivileges(targetConn, d, false)
+	if err := withRolesGranted(ctx, targetConn, owners, func() error {
+		return revokeRolePrivileges(ctx, targetConn, d, false)
 	}); err != nil {
 		return err
 	}
@@ -233,7 +234,7 @@ func objectTypeUsesAllRelevant(objectType string) bool {
 	return false
 }
 
-func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
+func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	role := d.Get("role").(string)
 	objectType := strings.ToUpper(d.Get("object_type").(string))
 	schemaName := d.Get("schema").(string)
@@ -258,7 +259,7 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 			// failed information_schema query the same as "schema has zero
 			// objects" would cause the empty-schema branch below to silently
 			// preserve stale state and hide real drift.
-			objRows, err := db.Query(objQuery)
+			objRows, err := db.QueryContext(ctx, objQuery)
 			if err != nil {
 				return err
 			}
@@ -294,7 +295,7 @@ func readRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 	// If the managed resource is itself the `public` role, we obviously do
 	// need to read public's grants.
 	query := fmt.Sprintf("SHOW GRANTS FOR %s", pq.QuoteIdentifier(role))
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return err
 	}
@@ -549,7 +550,7 @@ func createRevokeQuery(getter ResourceSchemeGetter) string {
 	return query
 }
 
-func grantRolePrivileges(db QueryAble, d *schema.ResourceData) error {
+func grantRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
 	privs := []string{}
 	for _, p := range d.Get("privileges").(*schema.Set).List() {
 		privs = append(privs, p.(string))
@@ -557,11 +558,11 @@ func grantRolePrivileges(db QueryAble, d *schema.ResourceData) error {
 	if len(privs) == 0 {
 		return nil
 	}
-	_, err := db.Exec(createGrantQuery(d, privs))
+	_, err := db.ExecContext(ctx, createGrantQuery(d, privs))
 	return err
 }
 
-func revokeRolePrivileges(db QueryAble, d *schema.ResourceData, usePrevious bool) error {
+func revokeRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceData, usePrevious bool) error {
 	getter := d.Get
 	if usePrevious {
 		getter = func(name string) any {
@@ -576,26 +577,26 @@ func revokeRolePrivileges(db QueryAble, d *schema.ResourceData, usePrevious bool
 	if query == "" {
 		return nil
 	}
-	_, err := db.Exec(query)
+	_, err := db.ExecContext(ctx, query)
 	return err
 }
 
-func checkRoleDBSchemaExists(db QueryAble, d *schema.ResourceData) (bool, error) {
+func checkRoleDBSchemaExists(ctx context.Context, db QueryAble, d *schema.ResourceData) (bool, error) {
 	database := d.Get("database").(string)
-	exists, err := dbExists(db, database)
+	exists, err := dbExists(ctx, db, database)
 	if err != nil || !exists {
 		return false, err
 	}
 	role := d.Get("role").(string)
 	if role != publicRole {
-		exists, err = roleExists(db, role)
+		exists, err = roleExists(ctx, db, role)
 		if err != nil || !exists {
 			return false, err
 		}
 	}
 	pgSchema := d.Get("schema").(string)
 	if !sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, d.Get("object_type").(string)) && pgSchema != "" {
-		exists, err = schemaExists(db, pgSchema)
+		exists, err = schemaExists(ctx, db, pgSchema)
 		if err != nil || !exists {
 			return false, err
 		}
@@ -619,7 +620,7 @@ func generateGrantID(d *schema.ResourceData) string {
 	return strings.Join(parts, "_")
 }
 
-func getRolesToGrant(db QueryAble, d *schema.ResourceData) ([]string, error) {
+func getRolesToGrant(ctx context.Context, db QueryAble, d *schema.ResourceData) ([]string, error) {
 	objectType := d.Get("object_type").(string)
 	if sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, objectType) {
 		return []string{}, nil
@@ -627,23 +628,23 @@ func getRolesToGrant(db QueryAble, d *schema.ResourceData) ([]string, error) {
 	schemaName := d.Get("schema").(string)
 	owners := []string{}
 	if objectType != "schema" {
-		tblOwners, err := getTablesOwner(db, schemaName)
+		tblOwners, err := getTablesOwner(ctx, db, schemaName)
 		if err != nil {
 			return nil, err
 		}
 		owners = append(owners, tblOwners...)
 	}
-	schOwner, err := getSchemaOwner(db, schemaName)
+	schOwner, err := getSchemaOwner(ctx, db, schemaName)
 	if err != nil {
 		return nil, err
 	}
 	if !sliceContainsStr(owners, schOwner) {
 		owners = append(owners, schOwner)
 	}
-	return resolveOwners(db, owners)
+	return resolveOwners(ctx, db, owners)
 }
 
-func validateFeatureSupport(db *DBConnection, d *schema.ResourceData) error {
+func validateFeatureSupport(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	if !db.featureSupported(featurePrivileges) {
 		return fmt.Errorf("cockroachsql_grant resource is not supported for version %s", db.version)
 	}

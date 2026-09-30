@@ -2,6 +2,7 @@ package cockroachsql
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -65,7 +66,7 @@ func resourceCockroachSQLSchema() *schema.Resource {
 	}
 }
 
-func resourceCockroachSQLSchemaCreate(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLSchemaCreate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	database := getDatabase(d, db.client.databaseName)
 
 	// If the target database is different from the current connection,
@@ -73,7 +74,7 @@ func resourceCockroachSQLSchemaCreate(db *DBConnection, d *schema.ResourceData) 
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -86,7 +87,7 @@ func resourceCockroachSQLSchemaCreate(db *DBConnection, d *schema.ResourceData) 
 	//  * the owner of the schema, if it has one (in order to change its owner)
 	var rolesToGrant []string
 
-	dbOwner, err := getDatabaseOwner(conn, database)
+	dbOwner, err := getDatabaseOwner(ctx, conn, database)
 	if err != nil {
 		return err
 	}
@@ -97,23 +98,23 @@ func resourceCockroachSQLSchemaCreate(db *DBConnection, d *schema.ResourceData) 
 		rolesToGrant = append(rolesToGrant, schemaOwner)
 	}
 
-	if err := withRolesGranted(conn, rolesToGrant, func() error {
-		return createSchema(db, conn, d)
+	if err := withRolesGranted(ctx, conn, rolesToGrant, func() error {
+		return createSchema(ctx, db, conn, d)
 	}); err != nil {
 		return err
 	}
 
 	d.SetId(generateSchemaID(d, database))
 
-	return resourceCockroachSQLSchemaReadImpl(db, d)
+	return resourceCockroachSQLSchemaReadImpl(ctx, db, d)
 }
 
-func createSchema(db *DBConnection, conn QueryAble, d *schema.ResourceData) error {
+func createSchema(ctx context.Context, db *DBConnection, conn QueryAble, d *schema.ResourceData) error {
 	schemaName := d.Get(schemaNameAttr).(string)
 
 	// Check if previous tasks haven't already create schema
 	var foundSchema bool
-	err := conn.QueryRow(`SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname = $1`, schemaName).Scan(&foundSchema)
+	err := conn.QueryRowContext(ctx, `SELECT TRUE FROM pg_catalog.pg_namespace WHERE nspname = $1`, schemaName).Scan(&foundSchema)
 
 	queries := []string{}
 	switch {
@@ -137,13 +138,13 @@ func createSchema(db *DBConnection, conn QueryAble, d *schema.ResourceData) erro
 
 	default:
 		// The schema already exists, we just set the owner.
-		if err := setSchemaOwner(conn, d); err != nil {
+		if err := setSchemaOwner(ctx, conn, d); err != nil {
 			return err
 		}
 	}
 
 	for _, query := range queries {
-		if _, err = conn.Exec(query); err != nil {
+		if _, err = conn.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("error creating schema %s (SQL: %s): %w", schemaName, query, err)
 		}
 	}
@@ -151,13 +152,13 @@ func createSchema(db *DBConnection, conn QueryAble, d *schema.ResourceData) erro
 	return nil
 }
 
-func resourceCockroachSQLSchemaDelete(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLSchemaDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	database := getDatabase(d, db.client.databaseName)
 
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -171,7 +172,7 @@ func resourceCockroachSQLSchemaDelete(db *DBConnection, d *schema.ResourceData) 
 		return nil
 	}
 
-	exists, err := schemaExists(conn, schemaName)
+	exists, err := schemaExists(ctx, conn, schemaName)
 	if err != nil {
 		return err
 	}
@@ -182,14 +183,14 @@ func resourceCockroachSQLSchemaDelete(db *DBConnection, d *schema.ResourceData) 
 
 	owner := d.Get("owner").(string)
 
-	if err = withRolesGranted(conn, []string{owner}, func() error {
+	if err = withRolesGranted(ctx, conn, []string{owner}, func() error {
 		dropMode := "RESTRICT"
 		if d.Get(schemaDropCascade).(bool) {
 			dropMode = "CASCADE"
 		}
 
 		sql := fmt.Sprintf("DROP SCHEMA %s %s", pq.QuoteIdentifier(schemaName), dropMode)
-		if _, err = conn.Exec(sql); err != nil {
+		if _, err = conn.ExecContext(ctx, sql); err != nil {
 			return fmt.Errorf("error deleting schema (SQL: %s): %w", sql, err)
 		}
 
@@ -203,14 +204,14 @@ func resourceCockroachSQLSchemaDelete(db *DBConnection, d *schema.ResourceData) 
 	return nil
 }
 
-func resourceCockroachSQLSchemaExists(db *DBConnection, d *schema.ResourceData) (bool, error) {
+func resourceCockroachSQLSchemaExists(ctx context.Context, db *DBConnection, d *schema.ResourceData) (bool, error) {
 	database, schemaName, err := getDBSchemaName(d, db.client.databaseName)
 	if err != nil {
 		return false, err
 	}
 
 	// Check if the database exists
-	exists, err := dbExists(db, database)
+	exists, err := dbExists(ctx, db, database)
 	if err != nil || !exists {
 		return false, err
 	}
@@ -218,14 +219,14 @@ func resourceCockroachSQLSchemaExists(db *DBConnection, d *schema.ResourceData) 
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return false, err
 		}
 		conn = targetConn.DB
 	}
 
-	err = conn.QueryRow("SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.nspname=$1", schemaName).Scan(&schemaName)
+	err = conn.QueryRowContext(ctx, "SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.nspname=$1", schemaName).Scan(&schemaName)
 	switch {
 	case err == sql.ErrNoRows:
 		return false, nil
@@ -236,8 +237,8 @@ func resourceCockroachSQLSchemaExists(db *DBConnection, d *schema.ResourceData) 
 	return true, nil
 }
 
-func resourceCockroachSQLSchemaRead(db *DBConnection, d *schema.ResourceData) error {
-	exists, err := resourceCockroachSQLSchemaExists(db, d)
+func resourceCockroachSQLSchemaRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	exists, err := resourceCockroachSQLSchemaExists(ctx, db, d)
 	if err != nil {
 		return err
 	}
@@ -246,10 +247,10 @@ func resourceCockroachSQLSchemaRead(db *DBConnection, d *schema.ResourceData) er
 		return nil
 	}
 
-	return resourceCockroachSQLSchemaReadImpl(db, d)
+	return resourceCockroachSQLSchemaReadImpl(ctx, db, d)
 }
 
-func resourceCockroachSQLSchemaReadImpl(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLSchemaReadImpl(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	database, schemaName, err := getDBSchemaName(d, db.client.databaseName)
 	if err != nil {
 		return err
@@ -258,7 +259,7 @@ func resourceCockroachSQLSchemaReadImpl(db *DBConnection, d *schema.ResourceData
 	conn := db.DB
 	if database != db.client.databaseName {
 		targetClient := db.client.config.NewClient(database)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
@@ -266,7 +267,7 @@ func resourceCockroachSQLSchemaReadImpl(db *DBConnection, d *schema.ResourceData
 	}
 
 	var schemaOwner string
-	err = conn.QueryRow("SELECT pg_catalog.pg_get_userbyid(n.nspowner) FROM pg_catalog.pg_namespace n WHERE n.nspname=$1", schemaName).Scan(&schemaOwner)
+	err = conn.QueryRowContext(ctx, "SELECT pg_catalog.pg_get_userbyid(n.nspowner) FROM pg_catalog.pg_namespace n WHERE n.nspname=$1", schemaName).Scan(&schemaOwner)
 	switch {
 	case err == sql.ErrNoRows:
 		log.Printf("[WARN] CockroachSQL schema (%s) not found in database %s", schemaName, database)
@@ -284,31 +285,31 @@ func resourceCockroachSQLSchemaReadImpl(db *DBConnection, d *schema.ResourceData
 	}
 }
 
-func resourceCockroachSQLSchemaUpdate(db *DBConnection, d *schema.ResourceData) error {
+func resourceCockroachSQLSchemaUpdate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
 	databaseName := getDatabase(d, db.client.databaseName)
 
 	conn := db.DB
 	if databaseName != db.client.databaseName {
 		targetClient := db.client.config.NewClient(databaseName)
-		targetConn, err := targetClient.Connect()
+		targetConn, err := targetClient.Connect(ctx)
 		if err != nil {
 			return err
 		}
 		conn = targetConn.DB
 	}
 
-	if err := setSchemaName(conn, d, databaseName); err != nil {
+	if err := setSchemaName(ctx, conn, d, databaseName); err != nil {
 		return err
 	}
 
-	if err := setSchemaOwner(conn, d); err != nil {
+	if err := setSchemaOwner(ctx, conn, d); err != nil {
 		return err
 	}
 
-	return resourceCockroachSQLSchemaReadImpl(db, d)
+	return resourceCockroachSQLSchemaReadImpl(ctx, db, d)
 }
 
-func setSchemaName(conn QueryAble, d *schema.ResourceData, databaseName string) error {
+func setSchemaName(ctx context.Context, conn QueryAble, d *schema.ResourceData, databaseName string) error {
 	if !d.HasChange(schemaNameAttr) {
 		return nil
 	}
@@ -321,7 +322,7 @@ func setSchemaName(conn QueryAble, d *schema.ResourceData, databaseName string) 
 	}
 
 	sql := fmt.Sprintf("ALTER SCHEMA %s RENAME TO %s", pq.QuoteIdentifier(o), pq.QuoteIdentifier(n))
-	if _, err := conn.Exec(sql); err != nil {
+	if _, err := conn.ExecContext(ctx, sql); err != nil {
 		return fmt.Errorf("error updating schema NAME (SQL: %s): %w", sql, err)
 	}
 	d.SetId(generateSchemaID(d, databaseName))
@@ -329,7 +330,7 @@ func setSchemaName(conn QueryAble, d *schema.ResourceData, databaseName string) 
 	return nil
 }
 
-func setSchemaOwner(conn QueryAble, d *schema.ResourceData) error {
+func setSchemaOwner(ctx context.Context, conn QueryAble, d *schema.ResourceData) error {
 	if !d.HasChange(schemaOwnerAttr) {
 		return nil
 	}
@@ -342,7 +343,7 @@ func setSchemaOwner(conn QueryAble, d *schema.ResourceData) error {
 	}
 
 	sql := fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", pq.QuoteIdentifier(schemaName), pq.QuoteIdentifier(schemaOwner))
-	if _, err := conn.Exec(sql); err != nil {
+	if _, err := conn.ExecContext(ctx, sql); err != nil {
 		return fmt.Errorf("error updating schema OWNER (SQL: %s): %w", sql, err)
 	}
 
