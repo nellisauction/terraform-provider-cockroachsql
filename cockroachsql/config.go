@@ -249,7 +249,7 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			log.Printf("[DEBUG] cockroachsql: cached connection for %s is dead: %v. Re-opening.", dsn, err)
+			log.Printf("[DEBUG] cockroachsql: cached connection for %s is dead: %v. Re-opening.", redactDSN(dsn), c.config.redactSecrets(err.Error()))
 			_ = conn.Close()
 			delete(dbRegistry, dsn)
 			found = false
@@ -258,14 +258,12 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	if !found {
 		db, err := sql.Open(proxyDriverName, dsn)
 		if err != nil {
-			errString := strings.Replace(err.Error(), c.config.Password, "XXXX", 2)
-			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", c.config.Host, errString)
+			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", redactDSN(dsn), c.config.redactSecrets(err.Error()))
 		}
 
 		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
-			errString := strings.Replace(err.Error(), c.config.Password, "XXXX", 2)
-			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", c.config.Host, errString)
+			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", redactDSN(dsn), c.config.redactSecrets(err.Error()))
 		}
 
 		// We don't want to retain connection
@@ -295,6 +293,49 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	}
 
 	return conn, nil
+}
+
+// redactDSN drops the password and the query string, which can carry inline
+// client keys when sslinline is set.
+func redactDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "<redacted connection string>"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.Redacted()
+}
+
+func (c *Config) redactSecrets(s string) string {
+	secrets := []string{c.Password}
+	if c.ConnectionURL != "" {
+		if u, err := url.Parse(c.ConnectionURL); err == nil && u.User != nil {
+			if p, ok := u.User.Password(); ok {
+				secrets = append(secrets, p)
+			}
+		}
+	}
+	if c.SSLClientCert != nil && c.SSLClientCert.SSLInline {
+		secrets = append(secrets, c.SSLClientCert.KeyPath)
+	}
+	return redactStrings(s, secrets...)
+}
+
+func redactStrings(s string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		s = strings.ReplaceAll(s, secret, "XXXX")
+		if escaped := url.PathEscape(secret); escaped != secret {
+			s = strings.ReplaceAll(s, escaped, "XXXX")
+		}
+		if escaped := url.QueryEscape(secret); escaped != secret {
+			s = strings.ReplaceAll(s, escaped, "XXXX")
+		}
+	}
+	return s
 }
 
 // fingerprintCapabilities queries CockroachDB to populate a local catalog of

@@ -290,7 +290,7 @@ func resourceCockroachSQLRoleCreate(ctx context.Context, db *DBConnection, d *sc
 	stmt := fmt.Sprintf("CREATE ROLE %s%s", pq.QuoteIdentifier(roleName), createStr)
 
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("error creating role %s (SQL: %s): %w", roleName, stmt, err)
+		return fmt.Errorf("error creating role %s: %s", roleName, redactRolePasswords(d, err.Error()))
 	}
 
 	if err := grantRoles(ctx, db, d); err != nil {
@@ -589,7 +589,7 @@ func setRolePassword(ctx context.Context, db QueryAble, d *schema.ResourceData) 
 
 	stmt := fmt.Sprintf("ALTER ROLE %s PASSWORD '%s'", pq.QuoteIdentifier(roleName), pqQuoteLiteral(password))
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("error updating role password: %w", err)
+		return fmt.Errorf("error updating role password: %s", redactRolePasswords(d, err.Error()))
 	}
 	return nil
 }
@@ -737,6 +737,12 @@ func setIdleInTransactionSessionTimeout(ctx context.Context, db QueryAble, d *sc
 		}
 	}
 	return nil
+}
+
+func redactRolePasswords(d *schema.ResourceData, s string) string {
+	wo, _ := getWO(d, rolePasswordWOAttr)
+	password := d.Get(rolePasswordAttr).(string)
+	return redactStrings(s, password, pqQuoteLiteral(password), wo, pqQuoteLiteral(wo))
 }
 
 func getWO(d *schema.ResourceData, attribute string) (string, bool) {
