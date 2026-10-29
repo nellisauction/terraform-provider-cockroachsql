@@ -310,16 +310,42 @@ func redactDSN(dsn string) string {
 func (c *Config) redactSecrets(s string) string {
 	secrets := []string{c.Password}
 	if c.ConnectionURL != "" {
-		if u, err := url.Parse(c.ConnectionURL); err == nil && u.User != nil {
-			if p, ok := u.User.Password(); ok {
-				secrets = append(secrets, p)
+		if u, err := url.Parse(c.ConnectionURL); err == nil {
+			if u.User != nil {
+				if p, ok := u.User.Password(); ok {
+					secrets = append(secrets, p)
+				}
 			}
+		} else if p := rawConnectionURLPassword(c.ConnectionURL); p != "" {
+			secrets = append(secrets, p)
 		}
 	}
 	if c.SSLClientCert != nil && c.SSLClientCert.SSLInline {
 		secrets = append(secrets, c.SSLClientCert.KeyPath)
 	}
 	return redactStrings(s, secrets...)
+}
+
+// rawConnectionURLPassword extracts the password from a URL that url.Parse
+// rejects; the driver echoes such URLs back in its parse errors.
+func rawConnectionURLPassword(raw string) string {
+	scheme := strings.Index(raw, "://")
+	if scheme < 0 {
+		return ""
+	}
+	authority := raw[scheme+3:]
+	if end := strings.IndexAny(authority, "/?#"); end >= 0 {
+		authority = authority[:end]
+	}
+	at := strings.LastIndexByte(authority, '@')
+	if at < 0 {
+		return ""
+	}
+	_, password, found := strings.Cut(authority[:at], ":")
+	if !found {
+		return ""
+	}
+	return password
 }
 
 func redactStrings(s string, secrets ...string) string {

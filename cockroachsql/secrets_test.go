@@ -3,6 +3,7 @@ package cockroachsql
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -40,6 +41,18 @@ func TestConfigRedactSecrets(t *testing.T) {
 
 	if got := (&Config{}).redactSecrets("unchanged"); got != "unchanged" {
 		t.Errorf("empty password must not alter the message, got %q", got)
+	}
+}
+
+func TestConfigRedactSecretsMalformedURL(t *testing.T) {
+	c := &Config{ConnectionURL: "postgresql://u:p@ss:word@host:abc/db"}
+	_, parseErr := url.Parse(c.ConnectionURL)
+	if parseErr == nil {
+		t.Fatal("expected the URL to be rejected by url.Parse")
+	}
+	got := c.redactSecrets(parseErr.Error())
+	if strings.Contains(got, "p@ss:word") {
+		t.Errorf("redactSecrets left the password in %q", got)
 	}
 }
 
