@@ -298,21 +298,26 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	return conn, nil
 }
 
+// isURLDSN mirrors lib/pq, which only treats these prefixes as URLs and parses
+// everything else as keyword/value pairs.
+func isURLDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
+}
+
 var errInvalidConnectionURL = errors.New("invalid connection url: it could not be parsed unambiguously; percent-encode reserved characters in the user name and password")
 
 // validateConnectionURL rejects URLs whose userinfo the URL parser would not
 // recognise (e.g. an unescaped '/' in the password moves it into the path),
 // since those would otherwise be echoed back unredacted.
 func validateConnectionURL(raw string) error {
-	scheme := strings.Index(raw, "://")
-	if scheme < 0 {
+	if !isURLDSN(raw) {
 		return nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return errInvalidConnectionURL
 	}
-	if strings.Contains(raw[scheme+3:], "@") && (u.User == nil || strings.ContainsRune(u.Path+u.RawQuery+u.Fragment, '@')) {
+	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && (u.User == nil || strings.ContainsRune(u.Path+u.RawQuery+u.Fragment, '@')) {
 		return errInvalidConnectionURL
 	}
 	return nil
@@ -322,7 +327,7 @@ func validateConnectionURL(raw string) error {
 // the path can hold a misparsed password, and the query string can carry
 // inline client keys when sslinline is set.
 func redactDSN(dsn string) string {
-	if validateConnectionURL(dsn) != nil || !strings.Contains(dsn, "://") {
+	if !isURLDSN(dsn) || validateConnectionURL(dsn) != nil {
 		return "<redacted connection string>"
 	}
 	u, err := url.Parse(dsn)
@@ -354,11 +359,10 @@ func (c *Config) redactSecrets(s string) string {
 // rejects. Everything between "://" and the last "@" is treated as userinfo so
 // that passwords containing '/', '?', '#' or '@' are captured whole.
 func rawConnectionURLPassword(raw string) string {
-	scheme := strings.Index(raw, "://")
-	if scheme < 0 {
+	if !isURLDSN(raw) {
 		return ""
 	}
-	rest := raw[scheme+3:]
+	rest := raw[strings.Index(raw, "://")+3:]
 	at := strings.LastIndexByte(rest, '@')
 	if at < 0 {
 		return ""

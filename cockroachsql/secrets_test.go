@@ -74,6 +74,7 @@ func TestValidateConnectionURL(t *testing.T) {
 		"postgresql://u@host/db",
 		"postgresql://host/db",
 		"host=h user=u password=p/ss@x",
+		"host=localhost user=u password=abc://def@x/y",
 	}
 	for _, raw := range valid {
 		if err := validateConnectionURL(raw); err != nil {
