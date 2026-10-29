@@ -243,10 +243,8 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	dsn := c.config.ConnectionURL
 	if dsn == "" {
 		dsn = c.config.connStr(c.databaseName)
-	} else if strings.Contains(dsn, "://") {
-		if _, err := url.Parse(dsn); err != nil {
-			return nil, errors.New("invalid connection url: it could not be parsed as a URL")
-		}
+	} else if err := validateConnectionURL(dsn); err != nil {
+		return nil, err
 	}
 	conn, found := dbRegistry[dsn]
 	if found {
@@ -300,28 +298,49 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	return conn, nil
 }
 
-// redactDSN drops the password and the query string, which can carry inline
-// client keys when sslinline is set.
+var errInvalidConnectionURL = errors.New("invalid connection url: it could not be parsed unambiguously; percent-encode reserved characters in the user name and password")
+
+// validateConnectionURL rejects URLs whose userinfo the URL parser would not
+// recognise (e.g. an unescaped '/' in the password moves it into the path),
+// since those would otherwise be echoed back unredacted.
+func validateConnectionURL(raw string) error {
+	scheme := strings.Index(raw, "://")
+	if scheme < 0 {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errInvalidConnectionURL
+	}
+	if strings.Contains(raw[scheme+3:], "@") && (u.User == nil || strings.ContainsRune(u.Path+u.RawQuery+u.Fragment, '@')) {
+		return errInvalidConnectionURL
+	}
+	return nil
+}
+
+// redactDSN keeps only the scheme and host: userinfo can hold the password,
+// the path can hold a misparsed password, and the query string can carry
+// inline client keys when sslinline is set.
 func redactDSN(dsn string) string {
-	u, err := url.Parse(dsn)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	if validateConnectionURL(dsn) != nil || !strings.Contains(dsn, "://") {
 		return "<redacted connection string>"
 	}
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.Redacted()
+	u, err := url.Parse(dsn)
+	if err != nil || u.Host == "" {
+		return "<redacted connection string>"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
 }
 
 func (c *Config) redactSecrets(s string) string {
 	secrets := []string{c.Password}
 	if c.ConnectionURL != "" {
-		if u, err := url.Parse(c.ConnectionURL); err == nil {
-			if u.User != nil {
-				if p, ok := u.User.Password(); ok {
-					secrets = append(secrets, p)
-				}
+		if u, err := url.Parse(c.ConnectionURL); err == nil && u.User != nil {
+			if p, ok := u.User.Password(); ok {
+				secrets = append(secrets, p)
 			}
-		} else if p := rawConnectionURLPassword(c.ConnectionURL); p != "" {
+		}
+		if p := rawConnectionURLPassword(c.ConnectionURL); p != "" {
 			secrets = append(secrets, p)
 		}
 	}

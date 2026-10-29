@@ -13,8 +13,11 @@ func TestRedactDSN(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
-		{"postgresql://u:s3cret@host:26257/db?sslmode=require", "postgresql://u:xxxxx@host:26257/db"},
-		{"postgresql://u@host:26257/db?sslinline=true&sslkey=-----BEGIN", "postgresql://u@host:26257/db"},
+		{"postgresql://u:s3cret@host:26257/db?sslmode=require", "postgresql://host:26257"},
+		{"postgresql://u@host:26257/db?sslinline=true&sslkey=-----BEGIN", "postgresql://host:26257"},
+		{"postgres://u:p/ss@host/db", "<redacted connection string>"},
+		{"postgres://u:p?ss@host/db", "<redacted connection string>"},
+		{"postgres://u:p#ss@host/db", "<redacted connection string>"},
 		{"host=h user=u password=s3cret", "<redacted connection string>"},
 	}
 	for _, tt := range tests {
@@ -53,16 +56,48 @@ func TestConfigRedactSecretsMalformedURL(t *testing.T) {
 	}
 }
 
-func TestConnectRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
-	const password = "p/ss?w#rd"
-	c := &Config{ConnectionURL: "postgresql://u:" + password + "@host:abc/db"}
-	_, err := c.NewClient("db").Connect(context.Background())
-	if err == nil {
-		t.Fatal("expected an error for an unparseable URL")
+func TestValidateConnectionURL(t *testing.T) {
+	invalid := []string{
+		"postgres://u:p/ss@host/db",
+		"postgres://u:p?ss@host/db",
+		"postgres://u:p#ss@host/db",
+		"postgresql://u:s3cret@host:abc/db",
 	}
-	for _, leaked := range []string{"p/ss", "w#rd", "host:abc"} {
-		if strings.Contains(err.Error(), leaked) {
-			t.Fatalf("error echoes the URL: %v", err)
+	for _, raw := range invalid {
+		if err := validateConnectionURL(raw); err != errInvalidConnectionURL {
+			t.Errorf("validateConnectionURL(%q) = %v, want the generic invalid URL error", raw, err)
+		}
+	}
+
+	valid := []string{
+		"postgresql://u:p%2Fss@host:26257/db?sslmode=require",
+		"postgresql://u@host/db",
+		"postgresql://host/db",
+		"host=h user=u password=p/ss@x",
+	}
+	for _, raw := range valid {
+		if err := validateConnectionURL(raw); err != nil {
+			t.Errorf("validateConnectionURL(%q) = %v, want nil", raw, err)
+		}
+	}
+}
+
+func TestConnectRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
+	for _, raw := range []string{
+		"postgresql://u:p/ss?w#rd@host:abc/db",
+		"postgres://u:p/ss@host/db",
+		"postgres://u:p?ss@host/db",
+		"postgres://u:p#ss@host/db",
+	} {
+		c := &Config{ConnectionURL: raw}
+		_, err := c.NewClient("db").Connect(context.Background())
+		if err == nil {
+			t.Fatalf("expected an error for %q", raw)
+		}
+		for _, leaked := range []string{"p/ss", "p?ss", "p#ss", "w#rd", "host"} {
+			if strings.Contains(err.Error(), leaked) {
+				t.Fatalf("error for %q echoes the URL: %v", raw, err)
+			}
 		}
 	}
 }
