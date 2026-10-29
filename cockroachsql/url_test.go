@@ -3,11 +3,13 @@ package cockroachsql
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	"github.com/lib/pq"
 )
 
 func TestConnectionURLForDatabase(t *testing.T) {
@@ -26,6 +28,74 @@ func TestConnectionURLForDatabase(t *testing.T) {
 			t.Errorf("connectionURLForDatabase(%q, %q) = %q, want %q", tt.url, tt.database, got, tt.want)
 		}
 	}
+}
+
+func TestConnStrEscapesHostileDatabaseNames(t *testing.T) {
+	const hostile = "x?host=evil&sslmode=disable#frag"
+	configs := map[string]*Config{
+		"fields":    {Host: "db.internal", Port: 26257, Username: "u", Password: "p", SSLMode: "verify-full"},
+		"url":       {ConnectionURL: "postgresql://u:p@db.internal:26257/defaultdb?sslmode=verify-full"},
+		"key/value": {ConnectionURL: "host=db.internal user=u sslmode=verify-full"},
+	}
+	for name, c := range configs {
+		dsn := c.connStr(hostile)
+		opts, err := parseDSNForTest(dsn)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if opts["host"] != "db.internal" || opts["sslmode"] != "verify-full" || opts["dbname"] != hostile {
+			t.Errorf("%s: database name altered connection options: %q -> %v", name, dsn, opts)
+		}
+	}
+}
+
+func parseDSNForTest(dsn string) (map[string]string, error) {
+	if strings.Contains(dsn, "://") {
+		converted, err := pq.ParseURL(dsn)
+		if err != nil {
+			return nil, err
+		}
+		dsn = converted
+	}
+	if _, err := pq.NewConnector(dsn); err != nil {
+		return nil, err
+	}
+	opts := map[string]string{}
+	for _, field := range splitKeyValueDSN(dsn) {
+		k, v, _ := strings.Cut(field, "=")
+		opts[k] = v
+	}
+	return opts, nil
+}
+
+// splitKeyValueDSN is a minimal libpq key/value tokenizer that honours single
+// quotes and backslash escapes; later keys override earlier ones.
+func splitKeyValueDSN(dsn string) []string {
+	var fields []string
+	var cur strings.Builder
+	inQuote, escaped := false, false
+	for _, r := range dsn {
+		switch {
+		case escaped:
+			cur.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '\'':
+			inQuote = !inQuote
+		case r == ' ' && !inQuote:
+			if cur.Len() > 0 {
+				fields = append(fields, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		fields = append(fields, cur.String())
+	}
+	return fields
 }
 
 func TestDatabaseFromConnectionURL(t *testing.T) {

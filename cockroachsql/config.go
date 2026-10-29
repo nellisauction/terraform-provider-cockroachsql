@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -217,17 +219,14 @@ func (c *Config) connStr(database string) string {
 		return connectionURLForDatabase(c.ConnectionURL, database)
 	}
 
-	connStr := fmt.Sprintf(
-		"postgresql://%s:%s@%s:%d/%s?%s",
-		url.PathEscape(c.Username),
-		url.PathEscape(c.Password),
-		c.Host,
-		c.Port,
-		database,
-		strings.Join(c.connParams(), "&"),
-	)
-
-	return connStr
+	u := url.URL{
+		Scheme:   "postgresql",
+		User:     url.UserPassword(c.Username, c.Password),
+		Host:     net.JoinHostPort(c.Host, strconv.Itoa(c.Port)),
+		Path:     "/" + database,
+		RawQuery: strings.Join(c.connParams(), "&"),
+	}
+	return u.String()
 }
 
 func connectionURLForDatabase(connectionURL, database string) string {
