@@ -3,6 +3,7 @@ package cockroachsql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -242,6 +243,10 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	dsn := c.config.ConnectionURL
 	if dsn == "" {
 		dsn = c.config.connStr(c.databaseName)
+	} else if strings.Contains(dsn, "://") {
+		if _, err := url.Parse(dsn); err != nil {
+			return nil, errors.New("invalid connection url: it could not be parsed as a URL")
+		}
 	}
 	conn, found := dbRegistry[dsn]
 	if found {
@@ -327,21 +332,19 @@ func (c *Config) redactSecrets(s string) string {
 }
 
 // rawConnectionURLPassword extracts the password from a URL that url.Parse
-// rejects; the driver echoes such URLs back in its parse errors.
+// rejects. Everything between "://" and the last "@" is treated as userinfo so
+// that passwords containing '/', '?', '#' or '@' are captured whole.
 func rawConnectionURLPassword(raw string) string {
 	scheme := strings.Index(raw, "://")
 	if scheme < 0 {
 		return ""
 	}
-	authority := raw[scheme+3:]
-	if end := strings.IndexAny(authority, "/?#"); end >= 0 {
-		authority = authority[:end]
-	}
-	at := strings.LastIndexByte(authority, '@')
+	rest := raw[scheme+3:]
+	at := strings.LastIndexByte(rest, '@')
 	if at < 0 {
 		return ""
 	}
-	_, password, found := strings.Cut(authority[:at], ":")
+	_, password, found := strings.Cut(rest[:at], ":")
 	if !found {
 		return ""
 	}

@@ -3,7 +3,6 @@ package cockroachsql
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -45,14 +44,26 @@ func TestConfigRedactSecrets(t *testing.T) {
 }
 
 func TestConfigRedactSecretsMalformedURL(t *testing.T) {
-	c := &Config{ConnectionURL: "postgresql://u:p@ss:word@host:abc/db"}
-	_, parseErr := url.Parse(c.ConnectionURL)
-	if parseErr == nil {
-		t.Fatal("expected the URL to be rejected by url.Parse")
+	for _, password := range []string{"p@ss:word", "p/ss", "p?ss", "p#ss", "a/b?c#d@e"} {
+		c := &Config{ConnectionURL: "postgresql://u:" + password + "@host:abc/db"}
+		got := c.redactSecrets("parse " + c.ConnectionURL + ": invalid port")
+		if strings.Contains(got, password) {
+			t.Errorf("redactSecrets left password %q in %q", password, got)
+		}
 	}
-	got := c.redactSecrets(parseErr.Error())
-	if strings.Contains(got, "p@ss:word") {
-		t.Errorf("redactSecrets left the password in %q", got)
+}
+
+func TestConnectRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
+	const password = "p/ss?w#rd"
+	c := &Config{ConnectionURL: "postgresql://u:" + password + "@host:abc/db"}
+	_, err := c.NewClient("db").Connect(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for an unparseable URL")
+	}
+	for _, leaked := range []string{"p/ss", "w#rd", "host:abc"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error echoes the URL: %v", err)
+		}
 	}
 }
 
