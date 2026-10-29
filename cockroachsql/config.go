@@ -213,6 +213,10 @@ func (c *Config) connParams() []string {
 }
 
 func (c *Config) connStr(database string) string {
+	if c.ConnectionURL != "" {
+		return connectionURLForDatabase(c.ConnectionURL, database)
+	}
+
 	connStr := fmt.Sprintf(
 		"postgresql://%s:%s@%s:%d/%s?%s",
 		url.PathEscape(c.Username),
@@ -224,6 +228,43 @@ func (c *Config) connStr(database string) string {
 	)
 
 	return connStr
+}
+
+func connectionURLForDatabase(connectionURL, database string) string {
+	if database == "" {
+		return connectionURL
+	}
+
+	if !isURLDSN(connectionURL) {
+		return fmt.Sprintf("%s dbname='%s'", connectionURL, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(database))
+	}
+
+	u, err := url.Parse(connectionURL)
+	if err != nil {
+		return connectionURL
+	}
+	u.Path = "/" + database
+	u.RawPath = ""
+	return u.String()
+}
+
+// databaseFromConnectionURL returns the database named in a URL or key/value
+// connection string, or "" when none is set.
+func databaseFromConnectionURL(connectionURL string) string {
+	if !isURLDSN(connectionURL) {
+		for _, field := range strings.Fields(connectionURL) {
+			if v, ok := strings.CutPrefix(field, "dbname="); ok {
+				return strings.Trim(v, "'")
+			}
+		}
+		return ""
+	}
+
+	u, err := url.Parse(connectionURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(u.Path, "/")
 }
 
 func (c *Config) getDatabaseUsername() string {
@@ -240,12 +281,12 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	dbRegistryLock.Lock()
 	defer dbRegistryLock.Unlock()
 
-	dsn := c.config.ConnectionURL
-	if dsn == "" {
-		dsn = c.config.connStr(c.databaseName)
-	} else if err := validateConnectionURL(dsn); err != nil {
-		return nil, err
+	if c.config.ConnectionURL != "" {
+		if err := validateConnectionURL(c.config.ConnectionURL); err != nil {
+			return nil, err
+		}
 	}
+	dsn := c.config.connStr(c.databaseName)
 	conn, found := dbRegistry[dsn]
 	if found {
 		if err := conn.PingContext(ctx); err != nil {
