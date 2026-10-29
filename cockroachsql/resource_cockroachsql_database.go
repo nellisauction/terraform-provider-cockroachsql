@@ -37,8 +37,7 @@ func resourceCockroachSQLDatabase() *schema.Resource {
 			dbNameAttr: {
 				Type:        schema.TypeString,
 				Required:    true,
-				ForceNew:    true,
-				Description: "The name of the database",
+				Description: "The name of the database. Changing it renames the database in place.",
 			},
 			dbOwnerAttr: {
 				Type:        schema.TypeString,
@@ -58,28 +57,36 @@ func resourceCockroachSQLDatabase() *schema.Resource {
 				Optional:    true,
 				ForceNew:    true,
 				Computed:    true,
-				Description: "Character set encoding to use in the new database",
+				Description: "Character set encoding to use in the new database. CockroachDB only supports UTF8.",
+				DiffSuppressFunc: func(_, old, new string, _ *schema.ResourceData) bool {
+					return normalizeDBEncoding(old) == normalizeDBEncoding(new)
+				},
 			},
 			dbCollationAttr: {
-				Type:        schema.TypeString,
-				Optional:    true,
-				ForceNew:    true,
-				Computed:    true,
-				Description: "Collation order (LC_COLLATE) to use in the new database",
+				Type:             schema.TypeString,
+				Optional:         true,
+				ForceNew:         true,
+				Computed:         true,
+				Description:      "Collation order (LC_COLLATE) to use in the new database",
+				DiffSuppressFunc: suppressDBLocaleDiff,
 			},
 			dbCTypeAttr: {
-				Type:        schema.TypeString,
-				Optional:    true,
-				ForceNew:    true,
-				Computed:    true,
-				Description: "Character classification (LC_CTYPE) to use in the new database",
+				Type:             schema.TypeString,
+				Optional:         true,
+				ForceNew:         true,
+				Computed:         true,
+				Description:      "Character classification (LC_CTYPE) to use in the new database",
+				DiffSuppressFunc: suppressDBLocaleDiff,
 			},
 			dbTablespaceAttr: {
 				Type:        schema.TypeString,
 				Optional:    true,
 				ForceNew:    true,
 				Computed:    true,
-				Description: "The name of the tablespace that will be associated with the new database",
+				Description: "The name of the tablespace that will be associated with the new database. CockroachDB only supports pg_default.",
+				DiffSuppressFunc: func(_, old, new string, _ *schema.ResourceData) bool {
+					return isDefaultDBTablespace(old) && isDefaultDBTablespace(new)
+				},
 			},
 		},
 	}
@@ -113,46 +120,79 @@ func createDatabase(ctx context.Context, db *DBConnection, d *schema.ResourceDat
 		}
 	}
 
+	query, err := createDatabaseQuery(d, currentUser)
+	if err != nil {
+		return err
+	}
 	dbName := d.Get(dbNameAttr).(string)
-	b := bytes.NewBufferString("CREATE DATABASE ")
-	fmt.Fprint(b, pq.QuoteIdentifier(dbName))
-
-	if v, ok := d.GetOk(dbOwnerAttr); ok {
-		fmt.Fprint(b, " OWNER ", pq.QuoteIdentifier(v.(string)))
-	} else {
-		fmt.Fprint(b, " OWNER ", pq.QuoteIdentifier(currentUser))
-	}
-
-	if v, ok := d.GetOk(dbCollationAttr); ok {
-		if strings.ToUpper(v.(string)) == "DEFAULT" {
-			fmt.Fprintf(b, " LC_COLLATE DEFAULT")
-		} else {
-			fmt.Fprintf(b, " LC_COLLATE '%s' ", pqQuoteLiteral(v.(string)))
-		}
-	}
-
-	if v, ok := d.GetOk(dbCTypeAttr); ok {
-		if strings.ToUpper(v.(string)) == "DEFAULT" {
-			fmt.Fprintf(b, " LC_CTYPE DEFAULT")
-		} else {
-			fmt.Fprintf(b, " LC_CTYPE '%s' ", pqQuoteLiteral(v.(string)))
-		}
-	}
-
-	if v, ok := d.GetOk(dbTablespaceAttr); ok {
-		if strings.ToUpper(v.(string)) == "DEFAULT" {
-			fmt.Fprint(b, " TABLESPACE DEFAULT")
-		} else {
-			fmt.Fprint(b, " TABLESPACE ", pq.QuoteIdentifier(v.(string)))
-		}
-	}
-
-	query := b.String()
 	if _, err := db.ExecContext(ctx, query); err != nil {
 		return fmt.Errorf("error creating database %q (SQL: %s): %w", dbName, query, err)
 	}
 
 	return nil
+}
+
+// CockroachDB only accepts 'C' and 'C.UTF-8' for LC_COLLATE/LC_CTYPE and
+// always reports en_US.utf8 back, so all of these are the same locale.
+var crdbDefaultDBLocales = map[string]bool{
+	"default":    true,
+	"c":          true,
+	"c.utf8":     true,
+	"en_us.utf8": true,
+}
+
+func normalizeDBEncoding(v string) string {
+	return strings.ToUpper(strings.NewReplacer("-", "", "_", "").Replace(strings.TrimSpace(v)))
+}
+
+func normalizeDBLocale(v string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(v)), "-", "")
+}
+
+func suppressDBLocaleDiff(_, old, new string, _ *schema.ResourceData) bool {
+	o, n := normalizeDBLocale(old), normalizeDBLocale(new)
+	return o == n || (crdbDefaultDBLocales[o] && crdbDefaultDBLocales[n])
+}
+
+func isDefaultDBTablespace(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "default", "pg_default":
+		return true
+	}
+	return false
+}
+
+func createDatabaseQuery(d *schema.ResourceData, currentUser string) (string, error) {
+	b := bytes.NewBufferString("CREATE DATABASE ")
+	fmt.Fprint(b, pq.QuoteIdentifier(d.Get(dbNameAttr).(string)))
+
+	if v, ok := d.GetOk(dbEncodingAttr); ok {
+		fmt.Fprintf(b, " ENCODING '%s'", pqQuoteLiteral(v.(string)))
+	}
+
+	for _, opt := range []struct{ attr, keyword string }{
+		{dbCollationAttr, "LC_COLLATE"},
+		{dbCTypeAttr, "LC_CTYPE"},
+	} {
+		v := d.Get(opt.attr).(string)
+		switch normalizeDBLocale(v) {
+		case "", "default", "en_us.utf8":
+			continue
+		}
+		fmt.Fprintf(b, " %s '%s'", opt.keyword, pqQuoteLiteral(v))
+	}
+
+	if v := d.Get(dbTablespaceAttr).(string); !isDefaultDBTablespace(v) {
+		return "", fmt.Errorf("CockroachDB does not support tablespaces; %s must be unset or pg_default, got %q", dbTablespaceAttr, v)
+	}
+
+	owner := currentUser
+	if v, ok := d.GetOk(dbOwnerAttr); ok {
+		owner = v.(string)
+	}
+	fmt.Fprint(b, " OWNER ", pq.QuoteIdentifier(owner))
+
+	return b.String(), nil
 }
 
 func resourceCockroachSQLDatabaseDelete(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
@@ -264,11 +304,33 @@ func resourceCockroachSQLDatabaseReadImpl(ctx context.Context, db *DBConnection,
 }
 
 func resourceCockroachSQLDatabaseUpdate(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if err := renameDB(ctx, db, d); err != nil {
+		return err
+	}
+
 	if err := setDBOwner(ctx, db, d); err != nil {
 		return err
 	}
 
 	return resourceCockroachSQLDatabaseReadImpl(ctx, db, d)
+}
+
+func renameDB(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
+	if !d.HasChange(dbNameAttr) {
+		return nil
+	}
+
+	oldRaw, newRaw := d.GetChange(dbNameAttr)
+	oldName, newName := oldRaw.(string), newRaw.(string)
+
+	query := fmt.Sprintf("ALTER DATABASE %s RENAME TO %s", pq.QuoteIdentifier(oldName), pq.QuoteIdentifier(newName))
+	if _, err := db.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("error renaming database %q to %q: %w", oldName, newName, err)
+	}
+
+	d.SetId(newName)
+
+	return nil
 }
 
 func setDBOwner(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
