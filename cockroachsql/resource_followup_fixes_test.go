@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
@@ -291,6 +294,50 @@ resource "cockroachsql_default_privileges" "test" {
 				ImportState:       true,
 				ImportStateId:     fmt.Sprintf("dp_import_role|%s|table|dp_import_owner|public", getTestDatabaseName()),
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func TestAccCockroachSQLRole_ReadWithoutShowRolesPrivilege(t *testing.T) {
+	skipIfNotAcc(t)
+	const limitedUser = "tf_tests_createrole_only"
+	config := getTestConfig(t)
+	adminDSN := config.connStr(getTestDatabaseName())
+
+	password := ""
+	createOpts := "LOGIN CREATEROLE CREATELOGIN"
+	if !strings.EqualFold(os.Getenv("COCKROACH_INSECURE"), "true") {
+		password = "limited-user-pass"
+		createOpts += fmt.Sprintf(" PASSWORD '%s'", password)
+	}
+	dbExecute(t, adminDSN, fmt.Sprintf("CREATE ROLE IF NOT EXISTS %s %s", limitedUser, createOpts))
+	defer dbExecute(t, adminDSN, fmt.Sprintf("DROP ROLE IF EXISTS %s", limitedUser))
+	dbExecute(t, adminDSN, fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", getTestDatabaseName(), limitedUser))
+	defer dbExecute(t, adminDSN, fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM %s", getTestDatabaseName(), limitedUser))
+
+	provider := Provider()
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() { testAccPreCheck(t) },
+		ProviderFactories: map[string]func() (*schema.Provider, error){
+			"cockroachsql": func() (*schema.Provider, error) { return provider, nil },
+		},
+		CheckDestroy: testAccCheckCockroachSQLRoleDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+provider "cockroachsql" {
+  username  = %q
+  password  = %q
+  superuser = false
+}
+
+resource "cockroachsql_role" "test" {
+  name                = "created_by_limited_user"
+  login               = true
+  skip_reassign_owned = true
+}`, limitedUser, password),
+				Check: resource.TestCheckResourceAttr("cockroachsql_role.test", "login", "true"),
 			},
 		},
 	})

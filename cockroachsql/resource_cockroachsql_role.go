@@ -347,14 +347,14 @@ func reassignAndDropOwned(ctx context.Context, db *DBConnection, roleName, newOw
 		}
 
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(newOwner))); err != nil {
-			if isUndefinedDatabaseError(err) {
+			if skipOtherDatabaseError(err, database, db.client.databaseName) {
 				continue
 			}
 			return fmt.Errorf("could not reassign owned by role %s to %s in database %s: %w", roleName, newOwner, database, err)
 		}
 
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName))); err != nil {
-			if isUndefinedDatabaseError(err) {
+			if skipOtherDatabaseError(err, database, db.client.databaseName) {
 				continue
 			}
 			return fmt.Errorf("could not drop owned by role %s in database %s: %w", roleName, database, err)
@@ -383,6 +383,22 @@ func listDatabases(ctx context.Context, db QueryAble) ([]string, error) {
 		return nil, fmt.Errorf("could not list databases: %w", err)
 	}
 	return databases, nil
+}
+
+// skipOtherDatabaseError tolerates databases that were dropped concurrently,
+// and permission errors outside the provider's own database: a provider user
+// without privileges there cannot have created objects for the role, and
+// DROP ROLE still fails with an explicit dependency error if any remain.
+func skipOtherDatabaseError(err error, database, providerDatabase string) bool {
+	if isUndefinedDatabaseError(err) {
+		return true
+	}
+	var pqErr *pq.Error
+	if database != providerDatabase && errors.As(err, &pqErr) && pqErr.Code == "42501" {
+		log.Printf("[WARN] skipping REASSIGN/DROP OWNED in database %s: %v", database, err)
+		return true
+	}
+	return false
 }
 
 func isUndefinedDatabaseError(err error) bool {
@@ -459,9 +475,10 @@ func resourceCockroachSQLRoleReadImpl(ctx context.Context, db *DBConnection, d *
 		return fmt.Errorf("error reading ROLE: %w", err)
 	}
 
-	roleCreateRole, roleCanLogin, err = readRoleOptions(ctx, db, roleName)
-	if err != nil {
-		return err
+	if createRole, canLogin, err := readRoleOptions(ctx, db, roleName); err != nil {
+		log.Printf("[WARN] %v; falling back to pg_roles, which can lag behind recent ALTER ROLE statements", err)
+	} else {
+		roleCreateRole, roleCanLogin = createRole, canLogin
 	}
 
 	d.Set(roleNameAttr, roleName)
@@ -499,7 +516,8 @@ func resourceCockroachSQLRoleReadImpl(ctx context.Context, db *DBConnection, d *
 
 // readRoleOptions reads LOGIN/CREATEROLE from SHOW ROLES, because
 // pg_roles.rolcanlogin and rolcreaterole can lag behind ALTER ROLE for
-// several seconds in CockroachDB.
+// several seconds in CockroachDB. SHOW ROLES needs SELECT on system.users and
+// system.role_members, so callers fall back to pg_roles when it fails.
 func readRoleOptions(ctx context.Context, db QueryAble, roleName string) (createRole bool, canLogin bool, err error) {
 	var options string
 	err = db.QueryRowContext(ctx, "SELECT COALESCE(options::STRING, '') FROM [SHOW ROLES] WHERE username = $1", roleName).Scan(&options)
