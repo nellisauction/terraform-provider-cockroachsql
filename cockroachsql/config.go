@@ -3,6 +3,7 @@ package cockroachsql
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -242,6 +243,8 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	dsn := c.config.ConnectionURL
 	if dsn == "" {
 		dsn = c.config.connStr(c.databaseName)
+	} else if err := validateConnectionURL(dsn); err != nil {
+		return nil, err
 	}
 	conn, found := dbRegistry[dsn]
 	if found {
@@ -249,7 +252,7 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			log.Printf("[DEBUG] cockroachsql: cached connection for %s is dead: %v. Re-opening.", dsn, err)
+			log.Printf("[DEBUG] cockroachsql: cached connection for %s is dead: %v. Re-opening.", redactDSN(dsn), c.config.redactSecrets(err.Error()))
 			_ = conn.Close()
 			delete(dbRegistry, dsn)
 			found = false
@@ -258,14 +261,12 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	if !found {
 		db, err := sql.Open(proxyDriverName, dsn)
 		if err != nil {
-			errString := strings.Replace(err.Error(), c.config.Password, "XXXX", 2)
-			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", c.config.Host, errString)
+			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", redactDSN(dsn), c.config.redactSecrets(err.Error()))
 		}
 
 		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
-			errString := strings.Replace(err.Error(), c.config.Password, "XXXX", 2)
-			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", c.config.Host, errString)
+			return nil, fmt.Errorf("error connecting to CockroachDB server %s: %s", redactDSN(dsn), c.config.redactSecrets(err.Error()))
 		}
 
 		// We don't want to retain connection
@@ -295,6 +296,174 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	}
 
 	return conn, nil
+}
+
+// isURLDSN mirrors lib/pq, which only treats these prefixes as URLs and parses
+// everything else as keyword/value pairs.
+func isURLDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
+}
+
+var errInvalidConnectionURL = errors.New("invalid connection url: it could not be parsed unambiguously; percent-encode reserved characters in the user name and password")
+
+// validateConnectionURL rejects URLs whose userinfo the URL parser may have
+// split incorrectly (e.g. an unescaped '/' in the password moves it into the
+// path), since part of the password could then escape redaction. A literal '@'
+// in the database name or query must be percent-encoded as %40.
+func validateConnectionURL(raw string) error {
+	if !isURLDSN(raw) {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errInvalidConnectionURL
+	}
+	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && (u.User == nil || strings.ContainsRune(u.EscapedPath()+u.RawQuery+u.EscapedFragment(), '@')) {
+		return errInvalidConnectionURL
+	}
+	return nil
+}
+
+// redactDSN keeps only the scheme and host: userinfo can hold the password,
+// the path can hold a misparsed password, and the query string can carry
+// inline client keys when sslinline is set.
+func redactDSN(dsn string) string {
+	if !isURLDSN(dsn) || validateConnectionURL(dsn) != nil {
+		return "<redacted connection string>"
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || u.Host == "" {
+		return "<redacted connection string>"
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
+}
+
+func (c *Config) redactSecrets(s string) string {
+	secrets := []string{c.Password}
+	if c.ConnectionURL != "" {
+		if u, err := url.Parse(c.ConnectionURL); err == nil {
+			if u.User != nil {
+				if p, ok := u.User.Password(); ok {
+					secrets = append(secrets, p)
+				}
+			}
+			if isURLDSN(c.ConnectionURL) {
+				secrets = append(secrets, u.Query()["password"]...)
+			}
+		}
+		if p := rawConnectionURLPassword(c.ConnectionURL); p != "" {
+			secrets = append(secrets, p)
+		}
+		if p := keywordDSNPassword(c.ConnectionURL); p != "" {
+			secrets = append(secrets, p)
+		}
+	}
+	if c.SSLClientCert != nil && c.SSLClientCert.SSLInline {
+		secrets = append(secrets, c.SSLClientCert.KeyPath)
+	}
+	return redactStrings(s, secrets...)
+}
+
+// rawConnectionURLPassword extracts the password from a URL that url.Parse
+// rejects. Everything between "://" and the last "@" is treated as userinfo so
+// that passwords containing '/', '?', '#' or '@' are captured whole.
+func rawConnectionURLPassword(raw string) string {
+	if !isURLDSN(raw) {
+		return ""
+	}
+	rest := raw[strings.Index(raw, "://")+3:]
+	at := strings.LastIndexByte(rest, '@')
+	if at < 0 {
+		return ""
+	}
+	_, password, found := strings.Cut(rest[:at], ":")
+	if !found {
+		return ""
+	}
+	return password
+}
+
+// keywordDSNPassword returns the effective (last) password in a keyword/value
+// DSN, tokenized the same way lib/pq does.
+func keywordDSNPassword(dsn string) string {
+	if isURLDSN(dsn) {
+		return ""
+	}
+	password := ""
+	for key, value := range keywordDSNPairs(dsn) {
+		if key == "password" {
+			password = value
+		}
+	}
+	return password
+}
+
+func keywordDSNPairs(dsn string) func(yield func(string, string) bool) {
+	return func(yield func(string, string) bool) {
+		r := []rune(dsn)
+		i := 0
+		skipSpaces := func() {
+			for i < len(r) && unicode.IsSpace(r[i]) {
+				i++
+			}
+		}
+		for {
+			skipSpaces()
+			if i >= len(r) {
+				return
+			}
+			start := i
+			for i < len(r) && !unicode.IsSpace(r[i]) && r[i] != '=' {
+				i++
+			}
+			key := string(r[start:i])
+			skipSpaces()
+			if i >= len(r) || r[i] != '=' {
+				return
+			}
+			i++
+			skipSpaces()
+			var value []rune
+			if i < len(r) && r[i] == '\'' {
+				i++
+				for i < len(r) && r[i] != '\'' {
+					if r[i] == '\\' && i+1 < len(r) {
+						i++
+					}
+					value = append(value, r[i])
+					i++
+				}
+				i++
+			} else {
+				for i < len(r) && !unicode.IsSpace(r[i]) {
+					if r[i] == '\\' && i+1 < len(r) {
+						i++
+					}
+					value = append(value, r[i])
+					i++
+				}
+			}
+			if !yield(key, string(value)) {
+				return
+			}
+		}
+	}
+}
+
+func redactStrings(s string, secrets ...string) string {
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		s = strings.ReplaceAll(s, secret, "XXXX")
+		if escaped := url.PathEscape(secret); escaped != secret {
+			s = strings.ReplaceAll(s, escaped, "XXXX")
+		}
+		if escaped := url.QueryEscape(secret); escaped != secret {
+			s = strings.ReplaceAll(s, escaped, "XXXX")
+		}
+	}
+	return s
 }
 
 // fingerprintCapabilities queries CockroachDB to populate a local catalog of

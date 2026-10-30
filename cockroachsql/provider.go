@@ -119,11 +119,13 @@ func Provider() *schema.Provider {
 							Type:        schema.TypeString,
 							Description: "The SSL client certificate file path. The file must contain PEM encoded data.",
 							Required:    true,
+							Sensitive:   true,
 						},
 						"key": {
 							Type:        schema.TypeString,
 							Description: "The SSL client certificate private key file path. The file must contain PEM encoded data.",
 							Required:    true,
+							Sensitive:   true,
 						},
 						"sslinline": {
 							Type:        schema.TypeBool,
