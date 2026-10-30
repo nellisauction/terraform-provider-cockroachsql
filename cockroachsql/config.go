@@ -341,9 +341,14 @@ func redactDSN(dsn string) string {
 func (c *Config) redactSecrets(s string) string {
 	secrets := []string{c.Password}
 	if c.ConnectionURL != "" {
-		if u, err := url.Parse(c.ConnectionURL); err == nil && u.User != nil {
-			if p, ok := u.User.Password(); ok {
-				secrets = append(secrets, p)
+		if u, err := url.Parse(c.ConnectionURL); err == nil {
+			if u.User != nil {
+				if p, ok := u.User.Password(); ok {
+					secrets = append(secrets, p)
+				}
+			}
+			if isURLDSN(c.ConnectionURL) {
+				secrets = append(secrets, u.Query()["password"]...)
 			}
 		}
 		if p := rawConnectionURLPassword(c.ConnectionURL); p != "" {

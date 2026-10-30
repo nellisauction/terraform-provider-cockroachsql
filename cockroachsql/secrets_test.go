@@ -52,6 +52,14 @@ func TestConfigRedactSecrets(t *testing.T) {
 	}
 }
 
+func TestConfigRedactSecretsQueryPassword(t *testing.T) {
+	c := &Config{ConnectionURL: "postgresql://u@host/db?password=q%2Fs3cret&sslmode=require"}
+	got := c.redactSecrets("auth failed for q/s3cret (q%2Fs3cret)")
+	if strings.Contains(got, "s3cret") {
+		t.Errorf("redactSecrets left the query password in %q", got)
+	}
+}
+
 func TestConfigRedactSecretsMalformedURL(t *testing.T) {
 	for _, password := range []string{"p@ss:word", "p/ss", "p?ss", "p#ss", "a/b?c#d@e"} {
 		c := &Config{ConnectionURL: "postgresql://u:" + password + "@host:abc/db"}
