@@ -2,7 +2,9 @@ package cockroachsql
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	"github.com/lib/pq"
 )
 
 func TestSplitImportList(t *testing.T) {
@@ -303,18 +306,21 @@ func TestAccCockroachSQLRole_ReadWithoutShowRolesPrivilege(t *testing.T) {
 	skipIfNotAcc(t)
 	const limitedUser = "tf_tests_createrole_only"
 	config := getTestConfig(t)
+	if config.ConnectionURL != "" {
+		t.Skip("COCKROACH_URL overrides the provider username and password")
+	}
 	adminDSN := config.connStr(getTestDatabaseName())
 
 	password := ""
 	createOpts := "LOGIN CREATEROLE CREATELOGIN"
 	if !strings.EqualFold(os.Getenv("COCKROACH_INSECURE"), "true") {
-		password = "limited-user-pass"
+		password = randomTestPassword(t)
 		createOpts += fmt.Sprintf(" PASSWORD '%s'", password)
 	}
 	dbExecute(t, adminDSN, fmt.Sprintf("CREATE ROLE IF NOT EXISTS %s %s", limitedUser, createOpts))
 	defer dbExecute(t, adminDSN, fmt.Sprintf("DROP ROLE IF EXISTS %s", limitedUser))
-	dbExecute(t, adminDSN, fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", getTestDatabaseName(), limitedUser))
-	defer dbExecute(t, adminDSN, fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM %s", getTestDatabaseName(), limitedUser))
+	dbExecute(t, adminDSN, fmt.Sprintf("GRANT CONNECT ON DATABASE %s TO %s", pq.QuoteIdentifier(getTestDatabaseName()), limitedUser))
+	defer dbExecute(t, adminDSN, fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM %s", pq.QuoteIdentifier(getTestDatabaseName()), limitedUser))
 
 	provider := Provider()
 	resource.Test(t, resource.TestCase{
@@ -337,8 +343,33 @@ resource "cockroachsql_role" "test" {
   login               = true
   skip_reassign_owned = true
 }`, limitedUser, password),
-				Check: resource.TestCheckResourceAttr("cockroachsql_role.test", "login", "true"),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("cockroachsql_role.test", "login", "true"),
+					func(*terraform.State) error {
+						db, err := provider.Meta().(*Client).Connect(context.Background())
+						if err != nil {
+							return err
+						}
+						currentUser, err := getCurrentUser(context.Background(), db)
+						if err != nil {
+							return err
+						}
+						if currentUser != limitedUser {
+							return fmt.Errorf("provider connected as %q, want %q", currentUser, limitedUser)
+						}
+						return nil
+					},
+				),
 			},
 		},
 	})
+}
+
+func randomTestPassword(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("could not generate a test password: %v", err)
+	}
+	return hex.EncodeToString(b)
 }
