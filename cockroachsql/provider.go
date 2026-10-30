@@ -172,7 +172,7 @@ func Provider() *schema.Provider {
 				DefaultFunc: multiEnvDefaultFunc([]string{
 					"COCKROACH_URL",
 				}, nil),
-				Description: "Connection URL for CockroachDB. If set, this overrides other connection parameters.",
+				Description: "Connection URL for CockroachDB. If set, this overrides the other connection parameters except `database`: resources that target another database connect to it through this URL. The database in the URL is used as the provider default unless `database` is set.",
 				Sensitive:   true,
 			},
 		},
@@ -247,6 +247,25 @@ func providerConfigure(_ context.Context, d *schema.ResourceData) (any, diag.Dia
 		}
 	}
 
-	client := config.NewClient(d.Get("database").(string))
-	return client, nil
+	return config.NewClient(providerDatabase(d, config.ConnectionURL)), nil
+}
+
+func providerDatabase(d *schema.ResourceData, connectionURL string) string {
+	explicit := os.Getenv("COCKROACH_DATABASE") != ""
+	if raw := d.GetRawConfig(); !raw.IsNull() && raw.IsKnown() && !raw.GetAttr("database").IsNull() {
+		explicit = true
+	}
+	return resolveProviderDatabase(d.Get("database").(string), explicit, connectionURL)
+}
+
+// resolveProviderDatabase prefers an explicitly configured database, then the
+// one in `url`, then the schema default.
+func resolveProviderDatabase(database string, explicit bool, connectionURL string) string {
+	if connectionURL == "" || explicit {
+		return database
+	}
+	if urlDatabase := databaseFromConnectionURL(connectionURL); urlDatabase != "" {
+		return urlDatabase
+	}
+	return database
 }

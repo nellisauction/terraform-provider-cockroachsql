@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -213,17 +215,63 @@ func (c *Config) connParams() []string {
 }
 
 func (c *Config) connStr(database string) string {
-	connStr := fmt.Sprintf(
-		"postgresql://%s:%s@%s:%d/%s?%s",
-		url.PathEscape(c.Username),
-		url.PathEscape(c.Password),
-		c.Host,
-		c.Port,
-		database,
-		strings.Join(c.connParams(), "&"),
-	)
+	if c.ConnectionURL != "" {
+		return connectionURLForDatabase(c.ConnectionURL, database)
+	}
 
-	return connStr
+	u := url.URL{
+		Scheme:   "postgresql",
+		User:     url.UserPassword(c.Username, c.Password),
+		Host:     net.JoinHostPort(c.Host, strconv.Itoa(c.Port)),
+		Path:     "/" + database,
+		RawQuery: strings.Join(c.connParams(), "&"),
+	}
+	return u.String()
+}
+
+func connectionURLForDatabase(connectionURL, database string) string {
+	if database == "" {
+		return connectionURL
+	}
+
+	if !isURLDSN(connectionURL) {
+		return fmt.Sprintf("%s dbname='%s'", connectionURL, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(database))
+	}
+
+	u, err := url.Parse(connectionURL)
+	if err != nil {
+		return connectionURL
+	}
+	u.Path = "/" + database
+	u.RawPath = ""
+	if q := u.Query(); q.Has("dbname") {
+		q.Del("dbname")
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
+}
+
+// databaseFromConnectionURL returns the database named in a URL or key/value
+// connection string, or "" when none is set.
+func databaseFromConnectionURL(connectionURL string) string {
+	if !isURLDSN(connectionURL) {
+		database := ""
+		for key, value := range keywordDSNPairs(connectionURL) {
+			if key == "dbname" {
+				database = value
+			}
+		}
+		return database
+	}
+
+	u, err := url.Parse(connectionURL)
+	if err != nil {
+		return ""
+	}
+	if values := u.Query()["dbname"]; len(values) > 0 {
+		return values[len(values)-1]
+	}
+	return strings.TrimPrefix(u.Path, "/")
 }
 
 func (c *Config) getDatabaseUsername() string {
@@ -240,12 +288,12 @@ func (c *Client) Connect(ctx context.Context) (*DBConnection, error) {
 	dbRegistryLock.Lock()
 	defer dbRegistryLock.Unlock()
 
-	dsn := c.config.ConnectionURL
-	if dsn == "" {
-		dsn = c.config.connStr(c.databaseName)
-	} else if err := validateConnectionURL(dsn); err != nil {
-		return nil, err
+	if c.config.ConnectionURL != "" {
+		if err := validateConnectionURL(c.config.ConnectionURL); err != nil {
+			return nil, err
+		}
 	}
+	dsn := c.config.connStr(c.databaseName)
 	conn, found := dbRegistry[dsn]
 	if found {
 		if err := conn.PingContext(ctx); err != nil {
