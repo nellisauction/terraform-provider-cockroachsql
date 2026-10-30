@@ -32,6 +32,9 @@ func resourceCockroachSQLGrantRole() *schema.Resource {
 		CreateContext: ResourceFunc(resourceCockroachSQLGrantRoleCreate),
 		ReadContext:   ResourceFunc(resourceCockroachSQLGrantRoleRead),
 		DeleteContext: ResourceFunc(resourceCockroachSQLGrantRoleDelete),
+		Importer: &schema.ResourceImporter{
+			StateContext: importCockroachSQLGrantRole,
+		},
 
 		Schema: map[string]*schema.Schema{
 			"role": {
@@ -77,11 +80,12 @@ func resourceCockroachSQLGrantRoleCreate(ctx context.Context, db *DBConnection, 
 	}
 
 	// Revoke the granted roles before granting them again.
-	if err := revokeRole(ctx, db, d); err != nil {
-		return err
-	}
-
-	if err := grantRole(ctx, db, d); err != nil {
+	if err := withDDLTransaction(ctx, db.DB, func(tx QueryAble) error {
+		if err := revokeRole(ctx, tx, d); err != nil {
+			return err
+		}
+		return grantRole(ctx, tx, d)
+	}); err != nil {
 		return err
 	}
 

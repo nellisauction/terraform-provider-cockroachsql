@@ -102,9 +102,10 @@ func dataSourceCockroachSQLSchemasRead(ctx context.Context, db *DBConnection, d 
 		queryConcatKeyword = queryConcatKeywordAnd
 	}
 
-	query = applySchemaDataSourceQueryFilters(query, queryConcatKeyword, d)
+	var args queryArgs
+	query = applySchemaDataSourceQueryFilters(query, queryConcatKeyword, d, &args)
 
-	rows, err := conn.QueryContext(ctx, query)
+	rows, err := conn.QueryContext(ctx, query, args.args...)
 	if err != nil {
 		return err
 	}
@@ -139,9 +140,9 @@ func generateDataSourceSchemasID(d *schema.ResourceData, databaseName string) st
 	}, "_")
 }
 
-func applySchemaDataSourceQueryFilters(query string, queryConcatKeyword string, d *schema.ResourceData) string {
+func applySchemaDataSourceQueryFilters(query string, queryConcatKeyword string, d *schema.ResourceData, args *queryArgs) string {
 	filters := []string{}
-	filters = append(filters, applyPatternMatchingToQuery(schemaPatternMatchingTarget, d)...)
+	filters = append(filters, applyPatternMatchingToQuery(schemaPatternMatchingTarget, d, args)...)
 
 	return finalizeQueryWithFilters(query, queryConcatKeyword, filters)
 }

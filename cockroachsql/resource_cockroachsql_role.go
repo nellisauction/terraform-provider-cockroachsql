@@ -107,7 +107,7 @@ func resourceCockroachSQLRole() *schema.Resource {
 				Elem:        &schema.Schema{Type: schema.TypeString},
 				Set:         schema.HashString,
 				MinItems:    0,
-				Description: "Role(s) to grant to this new role",
+				Description: "Role(s) to grant to this role. Only the memberships listed here are managed: memberships granted outside this attribute (for example with cockroachsql_grant_role) are neither reported as drift nor revoked.",
 			},
 			roleSearchPathAttr: {
 				Type:        schema.TypeList,
@@ -347,14 +347,14 @@ func reassignAndDropOwned(ctx context.Context, db *DBConnection, roleName, newOw
 		}
 
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(newOwner))); err != nil {
-			if isUndefinedDatabaseError(err) {
+			if skipOtherDatabaseError(err, database, db.client.databaseName) {
 				continue
 			}
 			return fmt.Errorf("could not reassign owned by role %s to %s in database %s: %w", roleName, newOwner, database, err)
 		}
 
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName))); err != nil {
-			if isUndefinedDatabaseError(err) {
+			if skipOtherDatabaseError(err, database, db.client.databaseName) {
 				continue
 			}
 			return fmt.Errorf("could not drop owned by role %s in database %s: %w", roleName, database, err)
@@ -383,6 +383,22 @@ func listDatabases(ctx context.Context, db QueryAble) ([]string, error) {
 		return nil, fmt.Errorf("could not list databases: %w", err)
 	}
 	return databases, nil
+}
+
+// skipOtherDatabaseError tolerates databases that were dropped concurrently,
+// and permission errors outside the provider's own database: a provider user
+// without privileges there cannot have created objects for the role, and
+// DROP ROLE still fails with an explicit dependency error if any remain.
+func skipOtherDatabaseError(err error, database, providerDatabase string) bool {
+	if isUndefinedDatabaseError(err) {
+		return true
+	}
+	var pqErr *pq.Error
+	if database != providerDatabase && errors.As(err, &pqErr) && pqErr.Code == "42501" {
+		log.Printf("[WARN] skipping REASSIGN/DROP OWNED in database %s: %v", database, err)
+		return true
+	}
+	return false
 }
 
 func isUndefinedDatabaseError(err error) bool {
@@ -459,13 +475,19 @@ func resourceCockroachSQLRoleReadImpl(ctx context.Context, db *DBConnection, d *
 		return fmt.Errorf("error reading ROLE: %w", err)
 	}
 
+	if createRole, canLogin, err := readRoleOptions(ctx, db, roleName); err != nil {
+		log.Printf("[WARN] %v; falling back to pg_roles, which can lag behind recent ALTER ROLE statements", err)
+	} else {
+		roleCreateRole, roleCanLogin = createRole, canLogin
+	}
+
 	d.Set(roleNameAttr, roleName)
 	d.Set(roleCreateRoleAttr, roleCreateRole)
 	d.Set(roleLoginAttr, roleCanLogin)
 	d.Set(roleSkipDropRoleAttr, d.Get(roleSkipDropRoleAttr).(bool))
 	d.Set(roleSkipReassignOwnedAttr, d.Get(roleSkipReassignOwnedAttr).(bool))
 	d.Set(roleValidUntilAttr, roleValidUntil)
-	d.Set(roleRolesAttr, pgArrayToSet(roleRoles))
+	d.Set(roleRolesAttr, pgArrayToSet(roleRoles).Intersection(d.Get(roleRolesAttr).(*schema.Set)))
 	d.Set(roleSearchPathAttr, readSearchPath(roleConfig))
 
 	statementTimeout, err := readStatementTimeout(roleConfig)
@@ -490,6 +512,31 @@ func resourceCockroachSQLRoleReadImpl(ctx context.Context, db *DBConnection, d *
 		d.Set(rolePasswordAttr, password)
 	}
 	return nil
+}
+
+// readRoleOptions reads LOGIN/CREATEROLE from SHOW ROLES, because
+// pg_roles.rolcanlogin and rolcreaterole can lag behind ALTER ROLE for
+// several seconds in CockroachDB. SHOW ROLES needs SELECT on system.users and
+// system.role_members, so callers fall back to pg_roles when it fails.
+func readRoleOptions(ctx context.Context, db QueryAble, roleName string) (createRole bool, canLogin bool, err error) {
+	var options string
+	err = db.QueryRowContext(ctx, "SELECT COALESCE(options::STRING, '') FROM [SHOW ROLES] WHERE username = $1", roleName).Scan(&options)
+	if err != nil {
+		return false, false, fmt.Errorf("could not read options of role %s: %w", roleName, err)
+	}
+	opts := parseRoleOptions(options)
+	return opts["CREATEROLE"], !opts["NOLOGIN"], nil
+}
+
+func parseRoleOptions(options string) map[string]bool {
+	opts := map[string]bool{}
+	for _, opt := range strings.Split(strings.Trim(options, "{}"), ",") {
+		opt = strings.ToUpper(strings.Trim(strings.TrimSpace(opt), `"`))
+		if name, _, _ := strings.Cut(opt, "="); name != "" {
+			opts[name] = true
+		}
+	}
+	return opts
 }
 
 func readSearchPath(roleConfig []string) []string {
@@ -595,10 +642,7 @@ func resourceCockroachSQLRoleUpdate(ctx context.Context, db *DBConnection, d *sc
 	if err := setRoleValidUntil(ctx, db, d); err != nil {
 		return err
 	}
-	if err := revokeRoles(ctx, db, d); err != nil {
-		return err
-	}
-	if err := grantRoles(ctx, db, d); err != nil {
+	if err := updateRoleMemberships(ctx, db, d); err != nil {
 		return err
 	}
 	if err := alterSearchPath(ctx, db, d); err != nil {
@@ -693,31 +737,27 @@ func setRoleValidUntil(ctx context.Context, db QueryAble, d *schema.ResourceData
 	return nil
 }
 
-func revokeRoles(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
+// updateRoleMemberships only touches memberships added to or removed from
+// `roles`, so memberships managed elsewhere (e.g. cockroachsql_grant_role)
+// are left alone.
+func updateRoleMemberships(ctx context.Context, db QueryAble, d *schema.ResourceData) error {
+	if !d.HasChange(roleRolesAttr) {
+		return nil
+	}
 	role := d.Get(roleNameAttr).(string)
-	query := `SELECT pg_get_userbyid(roleid) FROM pg_catalog.pg_auth_members members JOIN pg_catalog.pg_roles ON members.member = pg_roles.oid WHERE rolname = $1`
-	rows, err := db.QueryContext(ctx, query, role)
-	if err != nil {
-		return fmt.Errorf("could not get roles list: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
+	oldRaw, newRaw := d.GetChange(roleRolesAttr)
+	oldRoles, newRoles := oldRaw.(*schema.Set), newRaw.(*schema.Set)
 
-	var grantedRoles []string
-	for rows.Next() {
-		var grantedRole string
-		if err = rows.Scan(&grantedRole); err != nil {
-			return err
-		}
-		grantedRoles = append(grantedRoles, grantedRole)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	for _, grantedRole := range grantedRoles {
-		query = fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(grantedRole), pq.QuoteIdentifier(role))
+	for _, r := range oldRoles.Difference(newRoles).List() {
+		query := fmt.Sprintf("REVOKE %s FROM %s", pq.QuoteIdentifier(r.(string)), pq.QuoteIdentifier(role))
 		if _, err := db.ExecContext(ctx, query); err != nil {
-			return err
+			return fmt.Errorf("could not revoke role %s from %s: %w", r, role, err)
+		}
+	}
+	for _, r := range newRoles.Difference(oldRoles).List() {
+		query := fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(r.(string)), pq.QuoteIdentifier(role))
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("could not grant role %s to %s: %w", r, role, err)
 		}
 	}
 	return nil

@@ -34,6 +34,9 @@ func resourceCockroachSQLGrant() *schema.Resource {
 		UpdateContext: ResourceFunc(resourceCockroachSQLGrantUpdate),
 		ReadContext:   ResourceFunc(resourceCockroachSQLGrantRead),
 		DeleteContext: ResourceFunc(resourceCockroachSQLGrantDelete),
+		Importer: &schema.ResourceImporter{
+			StateContext: importCockroachSQLGrant,
+		},
 
 		Schema: map[string]*schema.Schema{
 			"role": {
@@ -87,7 +90,6 @@ func resourceCockroachSQLGrant() *schema.Resource {
 			"with_grant_option": {
 				Type:        schema.TypeBool,
 				Optional:    true,
-				ForceNew:    true,
 				Default:     false,
 				Description: "Permit the grant recipient to grant it to others",
 			},
@@ -145,10 +147,6 @@ func resourceCockroachSQLGrantCreateOrUpdate(ctx context.Context, db *DBConnecti
 	}
 
 	objectType := d.Get("object_type").(string)
-	schemaName := d.Get("schema").(string)
-	if schemaName != "" && !sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, objectType) {
-		_, _ = targetConn.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", pq.QuoteIdentifier(schemaName)))
-	}
 
 	if d.Get("schema").(string) == "" && !sliceContainsStr([]string{"database", "foreign_data_wrapper", "foreign_server"}, objectType) {
 		return fmt.Errorf("parameter 'schema' is mandatory for cockroachsql_grant resource")
@@ -180,13 +178,12 @@ func resourceCockroachSQLGrantCreateOrUpdate(ctx context.Context, db *DBConnecti
 		return err
 	}
 	if err := withRolesGranted(ctx, targetConn, owners, func() error {
-		if err := revokeRolePrivileges(ctx, targetConn, d, usePrevious); err != nil {
-			return err
-		}
-		if err := grantRolePrivileges(ctx, targetConn, d); err != nil {
-			return err
-		}
-		return nil
+		return withDDLTransaction(ctx, targetConn.DB, func(tx QueryAble) error {
+			if err := revokeRolePrivileges(ctx, tx, d, usePrevious); err != nil {
+				return err
+			}
+			return grantRolePrivileges(ctx, tx, d)
+		})
 	}); err != nil {
 		return err
 	}
@@ -242,6 +239,7 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 	database := d.Get("database").(string)
 
 	objectGrants := make(map[string]*schema.Set)
+	objectPrivGrantable := make(map[string]map[string]bool)
 	allRelevantObjects := make(map[string]bool)
 
 	if objects.Len() == 0 && schemaName != "" {
@@ -373,15 +371,19 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 		clean_r_name := strings.Trim(r_name, `"`)
 		if _, ok := objectGrants[clean_r_name]; !ok {
 			objectGrants[clean_r_name] = schema.NewSet(schema.HashString, []any{})
+			objectPrivGrantable[clean_r_name] = make(map[string]bool)
 		}
+		rowGrantable := isTruthy(m["is_grantable"])
 		if r_privilege == "ALL" {
 			for _, p := range allPrivs {
 				if p != "ALL" {
 					objectGrants[clean_r_name].Add(p)
+					objectPrivGrantable[clean_r_name][p] = rowGrantable
 				}
 			}
 		} else {
 			objectGrants[clean_r_name].Add(r_privilege)
+			objectPrivGrantable[clean_r_name][r_privilege] = rowGrantable
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -393,14 +395,17 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 	}
 
 	grantedSet := schema.NewSet(schema.HashString, []any{})
+	var considered []string
 	if objects.Len() > 0 {
 		first := true
 		for _, obj := range objects.List() {
 			objName := obj.(string)
 			var foundSet *schema.Set
+			foundKey := ""
 			for k, v := range objectGrants {
 				if strings.EqualFold(k, objName) {
 					foundSet = v
+					foundKey = k
 					break
 				}
 				if strings.Contains(k, "(") {
@@ -423,6 +428,7 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 					}
 					if normK == normObj {
 						foundSet = v
+						foundKey = k
 						break
 					}
 				}
@@ -431,6 +437,7 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 				grantedSet = schema.NewSet(schema.HashString, []any{})
 				break
 			}
+			considered = append(considered, foundKey)
 			if first {
 				grantedSet = foundSet
 				first = false
@@ -452,6 +459,8 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 			foundSet := objectGrants[objName]
 			if foundSet == nil {
 				foundSet = schema.NewSet(schema.HashString, []any{})
+			} else {
+				considered = append(considered, objName)
 			}
 			if first {
 				grantedSet = foundSet
@@ -470,16 +479,91 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 		// objects.
 		grantedSet = d.Get("privileges").(*schema.Set)
 	} else {
-		for _, v := range objectGrants {
+		for k, v := range objectGrants {
 			grantedSet = v
+			considered = append(considered, k)
 			break
 		}
+	}
+
+	if len(considered) > 0 && grantedSet.Len() > 0 {
+		perPrivilege := make(map[string]grantState)
+		for _, p := range grantedSet.List() {
+			var state grantState
+			for i, obj := range considered {
+				state = state.merge(objectPrivGrantable[obj][p.(string)], i == 0)
+			}
+			perPrivilege[p.(string)] = state
+		}
+		grantedSet = applyGrantOption(d, grantedSet, perPrivilege)
 	}
 
 	if !resourcePrivilegesEqual(grantedSet, d) {
 		return d.Set("privileges", grantedSet)
 	}
 	return nil
+}
+
+// grantState is the grant option observed for one privilege across all the
+// rows (objects) it was granted on.
+type grantState int
+
+const (
+	grantNone grantState = iota
+	grantAll
+	grantMixed
+)
+
+func (s grantState) merge(grantable bool, first bool) grantState {
+	observed := grantNone
+	if grantable {
+		observed = grantAll
+	}
+	if first || s == observed {
+		return observed
+	}
+	return grantMixed
+}
+
+// applyGrantOption sets with_grant_option from the observed rows. When the
+// grant option is not uniform (across privileges or objects), it keeps
+// with_grant_option as it is in state and drops the privileges that are not
+// uniformly consistent with it, so the plan shows a privileges diff and the
+// update re-applies them. This stays stable across repeated refreshes.
+func applyGrantOption(d *schema.ResourceData, granted *schema.Set, states map[string]grantState) *schema.Set {
+	allGrantable, noneGrantable := true, true
+	for _, st := range states {
+		allGrantable = allGrantable && st == grantAll
+		noneGrantable = noneGrantable && st == grantNone
+	}
+	switch {
+	case allGrantable:
+		d.Set("with_grant_option", true)
+		return granted
+	case noneGrantable:
+		d.Set("with_grant_option", false)
+		return granted
+	}
+
+	want := grantNone
+	if d.Get("with_grant_option").(bool) {
+		want = grantAll
+	}
+	consistent := schema.NewSet(schema.HashString, []any{})
+	for _, p := range granted.List() {
+		if states[p.(string)] == want {
+			consistent.Add(p)
+		}
+	}
+	return consistent
+}
+
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "t", "true", "yes", "1":
+		return true
+	}
+	return false
 }
 
 func createGrantQuery(d *schema.ResourceData, privileges []string) string {
@@ -567,7 +651,16 @@ func revokeRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceD
 	if usePrevious {
 		getter = func(name string) any {
 			if d.HasChange(name) {
-				old, _ := d.GetChange(name)
+				old, new := d.GetChange(name)
+				// Revoke the configured privileges as well, so a grant option
+				// that was added out of band is removed before re-granting.
+				if name == "privileges" {
+					privileges := old.(*schema.Set).Union(new.(*schema.Set))
+					if privileges.Contains("ALL") {
+						return schema.NewSet(schema.HashString, []any{"ALL"})
+					}
+					return privileges
+				}
 				return old
 			}
 			return d.Get(name)

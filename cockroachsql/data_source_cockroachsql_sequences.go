@@ -101,9 +101,10 @@ func dataSourceCockroachSQLSequencesRead(ctx context.Context, db *DBConnection, 
 	query := sequenceQuery
 	queryConcatKeyword := queryConcatKeywordWhere
 
-	query = applySequenceDataSourceQueryFilters(query, queryConcatKeyword, d)
+	var args queryArgs
+	query = applySequenceDataSourceQueryFilters(query, queryConcatKeyword, d, &args)
 
-	rows, err := conn.QueryContext(ctx, query)
+	rows, err := conn.QueryContext(ctx, query, args.args...)
 	if err != nil {
 		return err
 	}
@@ -146,13 +147,13 @@ func generateDataSourceSequencesID(d *schema.ResourceData, databaseName string) 
 	}, "_")
 }
 
-func applySequenceDataSourceQueryFilters(query string, queryConcatKeyword string, d *schema.ResourceData) string {
+func applySequenceDataSourceQueryFilters(query string, queryConcatKeyword string, d *schema.ResourceData, args *queryArgs) string {
 	filters := []string{}
-	schemasTypeFilter := applyTypeMatchingToQuery(sequenceSchemaKeyword, d.Get("schemas").([]any))
+	schemasTypeFilter := applyTypeMatchingToQuery(sequenceSchemaKeyword, d.Get("schemas").([]any), args)
 	if len(schemasTypeFilter) > 0 {
 		filters = append(filters, schemasTypeFilter)
 	}
-	filters = append(filters, applyPatternMatchingToQuery(sequencePatternMatchingTarget, d)...)
+	filters = append(filters, applyPatternMatchingToQuery(sequencePatternMatchingTarget, d, args)...)
 
 	return finalizeQueryWithFilters(query, queryConcatKeyword, filters)
 }

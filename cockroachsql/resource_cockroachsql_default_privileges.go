@@ -20,6 +20,9 @@ func resourceCockroachSQLDefaultPrivileges() *schema.Resource {
 		UpdateContext: ResourceFunc(resourceCockroachSQLDefaultPrivilegesCreate),
 		ReadContext:   ResourceFunc(resourceCockroachSQLDefaultPrivilegesRead),
 		DeleteContext: ResourceFunc(resourceCockroachSQLDefaultPrivilegesDelete),
+		Importer: &schema.ResourceImporter{
+			StateContext: importCockroachSQLDefaultPrivileges,
+		},
 
 		Schema: map[string]*schema.Schema{
 			"role": {
@@ -79,7 +82,6 @@ func resourceCockroachSQLDefaultPrivileges() *schema.Resource {
 			"with_grant_option": {
 				Type:        schema.TypeBool,
 				Optional:    true,
-				ForceNew:    true,
 				Default:     false,
 				Description: "Permit the grant recipient to grant it to others",
 			},
@@ -175,16 +177,13 @@ func resourceCockroachSQLDefaultPrivilegesCreate(ctx context.Context, db *DBConn
 
 	// Needed in order to set the owner of the db if the connection user is not a superuser
 	if err := withRolesGranted(ctx, conn, rolesToGrant, func() error {
-
 		// Revoke all privileges before granting otherwise reducing privileges will not work.
-		if err := revokeRoleDefaultPrivileges(ctx, conn, d); err != nil {
-			return err
-		}
-
-		if err := grantRoleDefaultPrivileges(ctx, conn, d); err != nil {
-			return err
-		}
-		return nil
+		return withDDLTransaction(ctx, conn, func(tx QueryAble) error {
+			if err := revokeRoleDefaultPrivileges(ctx, tx, d); err != nil {
+				return err
+			}
+			return grantRoleDefaultPrivileges(ctx, tx, d)
+		})
 	}); err != nil {
 		return err
 	}
@@ -264,6 +263,7 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 	cols, _ := rows.Columns()
 	log.Printf("[DEBUG] cockroachsql_default_privileges: found columns %v", cols)
 	var privileges []string
+	grantable := make(map[string]grantState)
 	for rows.Next() {
 		dest := make([]any, len(cols))
 		vals := make([]sql.NullString, len(cols))
@@ -302,6 +302,9 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 
 		if strings.EqualFold(r_object_type, targetPlural) && strings.EqualFold(strings.Trim(r_grantee, `"`), strings.Trim(role, `"`)) {
 			privileges = append(privileges, strings.ToUpper(r_privilege_type))
+			priv := strings.ToUpper(r_privilege_type)
+			state, seen := grantable[priv]
+			grantable[priv] = state.merge(isTruthy(m["is_grantable"]), !seen)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -317,6 +320,9 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 	}
 
 	privilegesSet := stringSliceToSet(privileges)
+	if len(privileges) > 0 {
+		privilegesSet = applyGrantOption(d, privilegesSet, grantable)
+	}
 	privilegesEqual := resourcePrivilegesEqual(privilegesSet, d)
 
 	if !privilegesEqual {
