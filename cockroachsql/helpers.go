@@ -163,6 +163,37 @@ func withRolesGranted(ctx context.Context, db QueryAble, roles []string, fn func
 	return fn()
 }
 
+// withDDLTransaction runs fn in a transaction so that a revoke followed by a
+// grant is applied atomically. CockroachDB v25.1+ commits the open transaction
+// before each DDL statement unless autocommit_before_ddl is disabled.
+func withDDLTransaction(ctx context.Context, db *sql.DB, fn func(QueryAble) error) error {
+	var hasAutocommitSetting bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_settings WHERE name = 'autocommit_before_ddl')").Scan(&hasAutocommitSetting); err != nil {
+		return fmt.Errorf("could not check for autocommit_before_ddl: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("could not start transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if hasAutocommitSetting {
+		if _, err := tx.ExecContext(ctx, "SET LOCAL autocommit_before_ddl = off"); err != nil {
+			return fmt.Errorf("could not disable autocommit_before_ddl: %w", err)
+		}
+	}
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("could not commit transaction: %w", err)
+	}
+	return nil
+}
+
 func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 }
