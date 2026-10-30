@@ -109,9 +109,10 @@ func dataSourceCockroachSQLTablesRead(ctx context.Context, db *DBConnection, d *
 	query := tableQuery
 	queryConcatKeyword := queryConcatKeywordWhere
 
-	query = applyTableDataSourceQueryFilters(query, queryConcatKeyword, d)
+	var args queryArgs
+	query = applyTableDataSourceQueryFilters(query, queryConcatKeyword, d, &args)
 
-	rows, err := conn.QueryContext(ctx, query)
+	rows, err := conn.QueryContext(ctx, query, args.args...)
 	if err != nil {
 		return err
 	}
@@ -155,17 +156,17 @@ func generateDataSourceTablesID(d *schema.ResourceData, databaseName string) str
 	}, "_")
 }
 
-func applyTableDataSourceQueryFilters(query string, queryConcatKeyword string, d *schema.ResourceData) string {
+func applyTableDataSourceQueryFilters(query string, queryConcatKeyword string, d *schema.ResourceData, args *queryArgs) string {
 	filters := []string{}
-	schemasTypeFilter := applyTypeMatchingToQuery(tableSchemaKeyword, d.Get("schemas").([]any))
+	schemasTypeFilter := applyTypeMatchingToQuery(tableSchemaKeyword, d.Get("schemas").([]any), args)
 	if len(schemasTypeFilter) > 0 {
 		filters = append(filters, schemasTypeFilter)
 	}
-	tableTypeFilter := applyTypeMatchingToQuery(tableTypeKeyword, d.Get("table_types").([]any))
+	tableTypeFilter := applyTypeMatchingToQuery(tableTypeKeyword, d.Get("table_types").([]any), args)
 	if len(tableTypeFilter) > 0 {
 		filters = append(filters, tableTypeFilter)
 	}
-	filters = append(filters, applyPatternMatchingToQuery(tablePatternMatchingTarget, d)...)
+	filters = append(filters, applyPatternMatchingToQuery(tablePatternMatchingTarget, d, args)...)
 
 	return finalizeQueryWithFilters(query, queryConcatKeyword, filters)
 }
