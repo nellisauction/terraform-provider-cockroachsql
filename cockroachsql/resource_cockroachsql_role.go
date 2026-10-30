@@ -5,9 +5,9 @@ import (
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -37,37 +37,23 @@ const (
 	roleDepEncryptedAttr = "encrypted"
 )
 
-var durationRegex = regexp.MustCompile(`^(\d+)([a-z]*)$`)
-
+// parseCRDBDurationMs parses a session timeout as reported in role settings
+// (e.g. "1m30s", "1.5s", "250ms"). Bare integers are milliseconds.
 func parseCRDBDurationMs(s string) (int, error) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if s == "0" || s == "" {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return 0, nil
 	}
 
-	matches := durationRegex.FindStringSubmatch(s)
-	if len(matches) != 3 {
+	if ms, err := strconv.Atoi(s); err == nil {
+		return ms, nil
+	}
+
+	duration, err := time.ParseDuration(strings.ToLower(s))
+	if err != nil {
 		return 0, fmt.Errorf("invalid duration format: %s", s)
 	}
-
-	val, err := strconv.Atoi(matches[1])
-	if err != nil {
-		return 0, err
-	}
-
-	unit := matches[2]
-	switch unit {
-	case "ms":
-		return val, nil
-	case "s", "":
-		return val * 1000, nil
-	case "m":
-		return val * 60 * 1000, nil
-	case "h":
-		return val * 60 * 60 * 1000, nil
-	default:
-		return val, nil // Fallback to raw value
-	}
+	return int(duration.Milliseconds()), nil
 }
 
 func resourceCockroachSQLRole() *schema.Resource {
@@ -324,15 +310,7 @@ func resourceCockroachSQLRoleDelete(ctx context.Context, db *DBConnection, d *sc
 
 	if !d.Get(roleSkipReassignOwnedAttr).(bool) {
 		if err := withRolesGranted(ctx, db, []string{roleName}, func() error {
-			currentUser := db.client.config.getDatabaseUsername()
-			if _, err := db.ExecContext(ctx, fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(currentUser))); err != nil {
-				return fmt.Errorf("could not reassign owned by role %s to %s: %w", roleName, currentUser, err)
-			}
-
-			if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName))); err != nil {
-				return fmt.Errorf("could not drop owned by role %s: %w", roleName, err)
-			}
-			return nil
+			return reassignAndDropOwned(ctx, db, roleName, db.client.config.getDatabaseUsername())
 		}); err != nil {
 			return err
 		}
@@ -346,6 +324,70 @@ func resourceCockroachSQLRoleDelete(ctx context.Context, db *DBConnection, d *sc
 	d.SetId("")
 
 	return nil
+}
+
+// reassignAndDropOwned runs REASSIGN OWNED and DROP OWNED in every database,
+// because both statements only affect objects in the current database.
+func reassignAndDropOwned(ctx context.Context, db *DBConnection, roleName, newOwner string) error {
+	databases, err := listDatabases(ctx, db)
+	if err != nil {
+		return err
+	}
+
+	for _, database := range databases {
+		conn := db
+		if database != db.client.databaseName {
+			conn, err = db.client.config.NewClient(database).Connect(ctx)
+			if err != nil {
+				if exists, existsErr := dbExists(ctx, db, database); existsErr == nil && !exists {
+					continue
+				}
+				return err
+			}
+		}
+
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("REASSIGN OWNED BY %s TO %s", pq.QuoteIdentifier(roleName), pq.QuoteIdentifier(newOwner))); err != nil {
+			if isUndefinedDatabaseError(err) {
+				continue
+			}
+			return fmt.Errorf("could not reassign owned by role %s to %s in database %s: %w", roleName, newOwner, database, err)
+		}
+
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("DROP OWNED BY %s", pq.QuoteIdentifier(roleName))); err != nil {
+			if isUndefinedDatabaseError(err) {
+				continue
+			}
+			return fmt.Errorf("could not drop owned by role %s in database %s: %w", roleName, database, err)
+		}
+	}
+
+	return nil
+}
+
+func listDatabases(ctx context.Context, db QueryAble) ([]string, error) {
+	rows, err := db.QueryContext(ctx, "SELECT datname FROM pg_catalog.pg_database WHERE datname <> 'system' ORDER BY datname")
+	if err != nil {
+		return nil, fmt.Errorf("could not list databases: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var databases []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("could not scan database name: %w", err)
+		}
+		databases = append(databases, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("could not list databases: %w", err)
+	}
+	return databases, nil
+}
+
+func isUndefinedDatabaseError(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "3D000"
 }
 
 func resourceCockroachSQLRoleExists(ctx context.Context, db *DBConnection, d *schema.ResourceData) (bool, error) {
@@ -492,6 +534,8 @@ func readStatementTimeout(roleConfig []string) (int, error) {
 	return 0, nil
 }
 
+const crdbMaskedPassword = "********"
+
 func readRolePassword(ctx context.Context, db *DBConnection, d *schema.ResourceData, roleCanLogin bool) (string, error) {
 	statePassword := d.Get(rolePasswordAttr).(string)
 	if !roleCanLogin || !db.client.config.Superuser {
@@ -513,6 +557,11 @@ func readRolePassword(ctx context.Context, db *DBConnection, d *schema.ResourceD
 		return "", nil
 	case err != nil:
 		return "", fmt.Errorf("error reading role password: %w", err)
+	}
+
+	// CockroachDB masks every stored password, so drift cannot be detected.
+	if rolePassword == crdbMaskedPassword {
+		return statePassword, nil
 	}
 
 	if statePassword != "" && !strings.HasPrefix(statePassword, "md5") && !strings.HasPrefix(statePassword, "SCRAM-SHA-256") {

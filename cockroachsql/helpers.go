@@ -34,14 +34,11 @@ type QueryAble interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// pqQuoteLiteral returns a string literal safe for inclusion in a CockroachSQL
-// query as a parameter.  The resulting string still needs to be wrapped in
-// single quotes in SQL (i.e. fmt.Sprintf(`'%s'`, pqQuoteLiteral("str"))).  See
-// quote_literal_internal() in cockroachsql/backend/utils/adt/quote.c:77.
+// pqQuoteLiteral escapes a value for use inside a standard (non-E) single
+// quoted literal, i.e. fmt.Sprintf(`'%s'`, pqQuoteLiteral("str")). Backslashes
+// are literal in such strings, so only single quotes are escaped.
 func pqQuoteLiteral(in string) string {
-	in = strings.ReplaceAll(in, `\`, `\\`)
-	in = strings.ReplaceAll(in, `'`, `''`)
-	return in
+	return strings.ReplaceAll(in, `'`, `''`)
 }
 
 func isMemberOfRole(ctx context.Context, db QueryAble, role, member string) (bool, error) {
@@ -154,10 +151,13 @@ func withRolesGranted(ctx context.Context, db QueryAble, roles []string, fn func
 			continue
 		}
 
-		if _, err := db.ExecContext(ctx, fmt.Sprintf("GRANT %s TO %s", pq.QuoteIdentifier(role), pq.QuoteIdentifier(currentUser))); err != nil {
+		granted, err := grantRoleMembership(ctx, db, role, currentUser)
+		if err != nil {
 			return fmt.Errorf("could not grant role %s to %s: %w", role, currentUser, err)
 		}
-		grantedRoles = append(grantedRoles, role)
+		if granted {
+			grantedRoles = append(grantedRoles, role)
+		}
 	}
 
 	return fn()
