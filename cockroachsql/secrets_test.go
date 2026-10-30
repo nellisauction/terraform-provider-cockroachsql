@@ -72,6 +72,7 @@ func TestValidateConnectionURL(t *testing.T) {
 	valid := []string{
 		"postgresql://u:p%2Fss@host:26257/db?sslmode=require",
 		"postgresql://u@host/db",
+		"postgresql://u:p@host/db@prod",
 		"postgresql://host/db",
 		"host=h user=u password=p/ss@x",
 		"host=localhost user=u password=abc://def@x/y",
@@ -99,6 +100,21 @@ func TestConnectRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
 			if strings.Contains(err.Error(), leaked) {
 				t.Fatalf("error for %q echoes the URL: %v", raw, err)
 			}
+		}
+	}
+}
+
+func TestKeywordDSNPassword(t *testing.T) {
+	tests := map[string]string{
+		"host=h user=u password=s3cret sslmode=require": "s3cret",
+		"host=h password = 'with space' user=u":         "with space",
+		`host=h password='it\'s'`:                       "it's",
+		"host=h user=u":                                 "",
+		"postgresql://u:p@h/db":                         "",
+	}
+	for in, want := range tests {
+		if got := keywordDSNPassword(in); got != want {
+			t.Errorf("keywordDSNPassword(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

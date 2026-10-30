@@ -317,7 +317,7 @@ func validateConnectionURL(raw string) error {
 	if err != nil {
 		return errInvalidConnectionURL
 	}
-	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && (u.User == nil || strings.ContainsRune(u.Path+u.RawQuery+u.Fragment, '@')) {
+	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && u.User == nil {
 		return errInvalidConnectionURL
 	}
 	return nil
@@ -348,6 +348,9 @@ func (c *Config) redactSecrets(s string) string {
 		if p := rawConnectionURLPassword(c.ConnectionURL); p != "" {
 			secrets = append(secrets, p)
 		}
+		if p := keywordDSNPassword(c.ConnectionURL); p != "" {
+			secrets = append(secrets, p)
+		}
 	}
 	if c.SSLClientCert != nil && c.SSLClientCert.SSLInline {
 		secrets = append(secrets, c.SSLClientCert.KeyPath)
@@ -372,6 +375,44 @@ func rawConnectionURLPassword(raw string) string {
 		return ""
 	}
 	return password
+}
+
+// keywordDSNPassword returns the raw password value from a keyword/value DSN,
+// as written (quotes and escapes included) and unescaped.
+func keywordDSNPassword(dsn string) string {
+	if isURLDSN(dsn) {
+		return ""
+	}
+	idx := strings.Index(dsn, "password")
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimLeft(dsn[idx+len("password"):], " \t")
+	if !strings.HasPrefix(rest, "=") {
+		return ""
+	}
+	rest = strings.TrimLeft(rest[1:], " \t")
+	if strings.HasPrefix(rest, "'") {
+		var b strings.Builder
+		for i := 1; i < len(rest); i++ {
+			switch rest[i] {
+			case '\\':
+				if i+1 < len(rest) {
+					i++
+					b.WriteByte(rest[i])
+				}
+			case '\'':
+				return b.String()
+			default:
+				b.WriteByte(rest[i])
+			}
+		}
+		return b.String()
+	}
+	if end := strings.IndexAny(rest, " \t"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
 }
 
 func redactStrings(s string, secrets ...string) string {
