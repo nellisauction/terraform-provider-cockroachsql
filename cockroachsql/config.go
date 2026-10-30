@@ -244,6 +244,10 @@ func connectionURLForDatabase(connectionURL, database string) string {
 	}
 	u.Path = "/" + database
 	u.RawPath = ""
+	if q := u.Query(); q.Has("dbname") {
+		q.Del("dbname")
+		u.RawQuery = q.Encode()
+	}
 	return u.String()
 }
 
@@ -251,17 +255,21 @@ func connectionURLForDatabase(connectionURL, database string) string {
 // connection string, or "" when none is set.
 func databaseFromConnectionURL(connectionURL string) string {
 	if !isURLDSN(connectionURL) {
-		for _, field := range strings.Fields(connectionURL) {
-			if v, ok := strings.CutPrefix(field, "dbname="); ok {
-				return strings.Trim(v, "'")
+		database := ""
+		for key, value := range keywordDSNPairs(connectionURL) {
+			if key == "dbname" {
+				database = value
 			}
 		}
-		return ""
+		return database
 	}
 
 	u, err := url.Parse(connectionURL)
 	if err != nil {
 		return ""
+	}
+	if values := u.Query()["dbname"]; len(values) > 0 {
+		return values[len(values)-1]
 	}
 	return strings.TrimPrefix(u.Path, "/")
 }

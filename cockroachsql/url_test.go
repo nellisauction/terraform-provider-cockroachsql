@@ -22,6 +22,7 @@ func TestConnectionURLForDatabase(t *testing.T) {
 		{"postgresql://u@h/defaultdb", "my db", "postgresql://u@h/my%20db"},
 		{"host=h user=u dbname=defaultdb", "other", "host=h user=u dbname=defaultdb dbname='other'"},
 		{"host=h user=u", `it's`, `host=h user=u dbname='it\'s'`},
+		{"postgresql://u@h/defaultdb?dbname=zzz&sslmode=require", "aaa", "postgresql://u@h/aaa?sslmode=require"},
 	}
 	for _, tt := range tests {
 		if got := connectionURLForDatabase(tt.url, tt.database); got != tt.want {
@@ -104,6 +105,10 @@ func TestDatabaseFromConnectionURL(t *testing.T) {
 		"postgresql://u@h:26257":                       "",
 		"host=h dbname='appdb' user=u":                 "appdb",
 		"host=h user=u":                                "",
+		"host=h dbname='team db' user=u":               "team db",
+		"host=h dbname=a dbname=b":                     "b",
+		"postgresql://u@h:26257?dbname=zzz":            "zzz",
+		"postgresql://u@h:26257/path?dbname=zzz":       "zzz",
 	}
 	for in, want := range tests {
 		if got := databaseFromConnectionURL(in); got != want {
