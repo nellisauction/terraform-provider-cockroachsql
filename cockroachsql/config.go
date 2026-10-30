@@ -318,7 +318,7 @@ func validateConnectionURL(raw string) error {
 	if err != nil {
 		return errInvalidConnectionURL
 	}
-	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && (u.User == nil || strings.ContainsRune(u.Path+u.RawQuery+u.Fragment, '@')) {
+	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && (u.User == nil || strings.ContainsRune(u.EscapedPath()+u.RawQuery+u.EscapedFragment(), '@')) {
 		return errInvalidConnectionURL
 	}
 	return nil
