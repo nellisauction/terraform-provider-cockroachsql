@@ -18,6 +18,8 @@ func TestRedactDSN(t *testing.T) {
 		{"postgres://u:p/ss@host/db", "<redacted connection string>"},
 		{"postgres://u:p?ss@host/db", "<redacted connection string>"},
 		{"postgres://u:p#ss@host/db", "<redacted connection string>"},
+		{"postgres://u:p@host/x@y", "<redacted connection string>"},
+		{"postgres://user:pa@ss@host/db", "postgres://host"},
 		{"host=h user=u password=s3cret", "<redacted connection string>"},
 	}
 	for _, tt := range tests {
@@ -62,6 +64,9 @@ func TestValidateConnectionURL(t *testing.T) {
 		"postgres://u:p?ss@host/db",
 		"postgres://u:p#ss@host/db",
 		"postgresql://u:s3cret@host:abc/db",
+		"postgres://u:p@host/x@y",
+		"postgres://u:p@host/db?options=a@b",
+		"postgres://u:p@host/db#a@b",
 	}
 	for _, raw := range invalid {
 		if err := validateConnectionURL(raw); err != errInvalidConnectionURL {
@@ -72,7 +77,8 @@ func TestValidateConnectionURL(t *testing.T) {
 	valid := []string{
 		"postgresql://u:p%2Fss@host:26257/db?sslmode=require",
 		"postgresql://u@host/db",
-		"postgresql://u:p@host/db@prod",
+		"postgresql://u:p@host/db%40prod",
+		"postgres://user:pa@ss@host/db",
 		"postgresql://host/db",
 		"host=h user=u password=p/ss@x",
 		"host=localhost user=u password=abc://def@x/y",

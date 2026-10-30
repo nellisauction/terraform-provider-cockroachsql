@@ -306,9 +306,10 @@ func isURLDSN(dsn string) bool {
 
 var errInvalidConnectionURL = errors.New("invalid connection url: it could not be parsed unambiguously; percent-encode reserved characters in the user name and password")
 
-// validateConnectionURL rejects URLs whose userinfo the URL parser would not
-// recognise (e.g. an unescaped '/' in the password moves it into the path),
-// since those would otherwise be echoed back unredacted.
+// validateConnectionURL rejects URLs whose userinfo the URL parser may have
+// split incorrectly (e.g. an unescaped '/' in the password moves it into the
+// path), since part of the password could then escape redaction. A literal '@'
+// in the database name or query must be percent-encoded as %40.
 func validateConnectionURL(raw string) error {
 	if !isURLDSN(raw) {
 		return nil
@@ -317,7 +318,7 @@ func validateConnectionURL(raw string) error {
 	if err != nil {
 		return errInvalidConnectionURL
 	}
-	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && u.User == nil {
+	if strings.Contains(raw[strings.Index(raw, "://")+3:], "@") && (u.User == nil || strings.ContainsRune(u.Path+u.RawQuery+u.Fragment, '@')) {
 		return errInvalidConnectionURL
 	}
 	return nil
