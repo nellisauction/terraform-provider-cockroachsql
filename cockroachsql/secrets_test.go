@@ -2,10 +2,14 @@ package cockroachsql
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/blang/semver"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
@@ -112,11 +116,13 @@ func TestConnectRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
 
 func TestKeywordDSNPassword(t *testing.T) {
 	tests := map[string]string{
-		"host=h user=u password=s3cret sslmode=require": "s3cret",
-		"host=h password = 'with space' user=u":         "with space",
-		`host=h password='it\'s'`:                       "it's",
-		"host=h user=u":                                 "",
-		"postgresql://u:p@h/db":                         "",
+		"host=h user=u password=s3cret sslmode=require":          "s3cret",
+		"host=h password = 'with space' user=u":                  "with space",
+		`host=h password='it\'s'`:                                "it's",
+		"host=h user=u":                                          "",
+		"host=h application_name=password=decoy password=s3cret": "s3cret",
+		"password=first password=second":                         "second",
+		"postgresql://u:p@h/db":                                  "",
 	}
 	for in, want := range tests {
 		if got := keywordDSNPassword(in); got != want {
@@ -157,6 +163,51 @@ func TestAccCockroachSQLRole_CreateErrorRedactsPassword(t *testing.T) {
 	err = resourceCockroachSQLRoleCreate(context.Background(), db, d)
 	if err == nil {
 		t.Fatal("expected CREATE ROLE to fail for an existing role")
+	}
+	for _, leaked := range []string{password, pqQuoteLiteral(password), "s3cr3t"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error leaks the password: %v", err)
+		}
+	}
+}
+
+type failingExecDriver struct{}
+
+func (failingExecDriver) Open(string) (driver.Conn, error) { return failingExecConn{}, nil }
+
+type failingExecConn struct{}
+
+func (failingExecConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not supported") }
+func (failingExecConn) Close() error                        { return nil }
+func (failingExecConn) Begin() (driver.Tx, error)           { return nil, errors.New("not supported") }
+func (failingExecConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	return nil, fmt.Errorf("server rejected: %s", query)
+}
+
+func init() {
+	sql.Register("cockroachsql-failing-exec", failingExecDriver{})
+}
+
+func TestRoleCreateRedactsPasswordFromDriverErrors(t *testing.T) {
+	const password = `s3cr3t'pa\55`
+
+	conn, err := sql.Open("cockroachsql-failing-exec", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	db := &DBConnection{DB: conn, client: (&Config{}).NewClient("db"), version: semver.MustParse("25.2.0")}
+
+	d := schema.TestResourceDataRaw(t, resourceCockroachSQLRole().Schema, map[string]any{
+		"name":     "r",
+		"password": password,
+	})
+	err = resourceCockroachSQLRoleCreate(context.Background(), db, d)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "server rejected") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, leaked := range []string{password, pqQuoteLiteral(password), "s3cr3t"} {
 		if strings.Contains(err.Error(), leaked) {

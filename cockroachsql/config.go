@@ -378,42 +378,71 @@ func rawConnectionURLPassword(raw string) string {
 	return password
 }
 
-// keywordDSNPassword returns the raw password value from a keyword/value DSN,
-// as written (quotes and escapes included) and unescaped.
+// keywordDSNPassword returns the effective (last) password in a keyword/value
+// DSN, tokenized the same way lib/pq does.
 func keywordDSNPassword(dsn string) string {
 	if isURLDSN(dsn) {
 		return ""
 	}
-	idx := strings.Index(dsn, "password")
-	if idx < 0 {
-		return ""
+	password := ""
+	for key, value := range keywordDSNPairs(dsn) {
+		if key == "password" {
+			password = value
+		}
 	}
-	rest := strings.TrimLeft(dsn[idx+len("password"):], " \t")
-	if !strings.HasPrefix(rest, "=") {
-		return ""
-	}
-	rest = strings.TrimLeft(rest[1:], " \t")
-	if strings.HasPrefix(rest, "'") {
-		var b strings.Builder
-		for i := 1; i < len(rest); i++ {
-			switch rest[i] {
-			case '\\':
-				if i+1 < len(rest) {
-					i++
-					b.WriteByte(rest[i])
-				}
-			case '\'':
-				return b.String()
-			default:
-				b.WriteByte(rest[i])
+	return password
+}
+
+func keywordDSNPairs(dsn string) func(yield func(string, string) bool) {
+	return func(yield func(string, string) bool) {
+		r := []rune(dsn)
+		i := 0
+		skipSpaces := func() {
+			for i < len(r) && unicode.IsSpace(r[i]) {
+				i++
 			}
 		}
-		return b.String()
+		for {
+			skipSpaces()
+			if i >= len(r) {
+				return
+			}
+			start := i
+			for i < len(r) && !unicode.IsSpace(r[i]) && r[i] != '=' {
+				i++
+			}
+			key := string(r[start:i])
+			skipSpaces()
+			if i >= len(r) || r[i] != '=' {
+				return
+			}
+			i++
+			skipSpaces()
+			var value []rune
+			if i < len(r) && r[i] == '\'' {
+				i++
+				for i < len(r) && r[i] != '\'' {
+					if r[i] == '\\' && i+1 < len(r) {
+						i++
+					}
+					value = append(value, r[i])
+					i++
+				}
+				i++
+			} else {
+				for i < len(r) && !unicode.IsSpace(r[i]) {
+					if r[i] == '\\' && i+1 < len(r) {
+						i++
+					}
+					value = append(value, r[i])
+					i++
+				}
+			}
+			if !yield(key, string(value)) {
+				return
+			}
+		}
 	}
-	if end := strings.IndexAny(rest, " \t"); end >= 0 {
-		return rest[:end]
-	}
-	return rest
 }
 
 func redactStrings(s string, secrets ...string) string {
