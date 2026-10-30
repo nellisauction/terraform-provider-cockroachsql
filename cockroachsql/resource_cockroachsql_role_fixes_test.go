@@ -93,7 +93,24 @@ func TestAccCockroachSQLRole_DropOwnedInOtherDatabases(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviderFactories,
-		CheckDestroy:      testAccCheckCockroachSQLRoleDestroy,
+		CheckDestroy: func(s *terraform.State) error {
+			if err := testAccCheckCockroachSQLRoleDestroy(s); err != nil {
+				return err
+			}
+			db, err := sql.Open(proxyDriverName, config.connStr(dbName))
+			if err != nil {
+				return err
+			}
+			defer func() { _ = db.Close() }()
+			var owner string
+			if err := db.QueryRow("SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'owned_by_role'").Scan(&owner); err != nil {
+				return fmt.Errorf("table owned by the deleted role was not preserved: %w", err)
+			}
+			if owner != config.getDatabaseUsername() {
+				return fmt.Errorf("owned_by_role is owned by %q, want %q", owner, config.getDatabaseUsername())
+			}
+			return nil
+		},
 		Steps: []resource.TestStep{
 			{
 				Config: fmt.Sprintf(`resource "cockroachsql_role" "owner" { name = %q }`, roleName),
@@ -102,6 +119,8 @@ func TestAccCockroachSQLRole_DropOwnedInOtherDatabases(t *testing.T) {
 					dbExecute(t, adminDSN, fmt.Sprintf("CREATE DATABASE %s OWNER %s", pqQuoteIdent(dbName), roleName))
 					dbExecute(t, adminDSN, fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", pqQuoteIdent(dbName), pqQuoteIdent(config.getDatabaseUsername())))
 					dbExecute(t, config.connStr(dbName), fmt.Sprintf("GRANT CREATE ON SCHEMA public TO %s", roleName))
+					dbExecute(t, config.connStr(dbName), "CREATE TABLE owned_by_role (id INT PRIMARY KEY)")
+					dbExecute(t, config.connStr(dbName), fmt.Sprintf("ALTER TABLE owned_by_role OWNER TO %s", roleName))
 					return nil
 				},
 			},
