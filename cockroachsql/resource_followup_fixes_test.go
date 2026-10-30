@@ -58,15 +58,17 @@ func TestParseRoleOptions(t *testing.T) {
 func TestApplyGrantOption(t *testing.T) {
 	tests := []struct {
 		name          string
-		grantable     map[string]bool
+		states        map[string]grantState
 		state         bool
 		wantOption    bool
 		wantPrivCount int
 	}{
-		{"all grantable", map[string]bool{"SELECT": true, "INSERT": true}, false, true, 2},
-		{"none grantable", map[string]bool{"SELECT": false, "INSERT": false}, true, false, 2},
-		{"mixed, state false", map[string]bool{"SELECT": true, "INSERT": false}, false, false, 1},
-		{"mixed, state true", map[string]bool{"SELECT": true, "INSERT": false}, true, true, 1},
+		{"all grantable", map[string]grantState{"SELECT": grantAll, "INSERT": grantAll}, false, true, 2},
+		{"none grantable", map[string]grantState{"SELECT": grantNone, "INSERT": grantNone}, true, false, 2},
+		{"mixed privileges, state false", map[string]grantState{"SELECT": grantAll, "INSERT": grantNone}, false, false, 1},
+		{"mixed privileges, state true", map[string]grantState{"SELECT": grantAll, "INSERT": grantNone}, true, true, 1},
+		{"mixed across objects, state false", map[string]grantState{"SELECT": grantMixed, "INSERT": grantNone}, false, false, 1},
+		{"mixed across objects, state true", map[string]grantState{"SELECT": grantMixed, "INSERT": grantAll}, true, true, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,7 +77,7 @@ func TestApplyGrantOption(t *testing.T) {
 				"with_grant_option": tt.state,
 			})
 			granted := schema.NewSet(schema.HashString, []any{"SELECT", "INSERT"})
-			got := applyGrantOption(d, granted, tt.grantable)
+			got := applyGrantOption(d, granted, tt.states)
 			if d.Get("with_grant_option").(bool) != tt.wantOption {
 				t.Errorf("with_grant_option = %v, want %v", d.Get("with_grant_option"), tt.wantOption)
 			}
@@ -83,6 +85,23 @@ func TestApplyGrantOption(t *testing.T) {
 				t.Errorf("privileges = %v, want %d entries", got.List(), tt.wantPrivCount)
 			}
 		})
+	}
+}
+
+func TestGrantStateMerge(t *testing.T) {
+	var s grantState
+	s = s.merge(true, true)
+	if s != grantAll {
+		t.Fatalf("got %v, want grantAll", s)
+	}
+	if s = s.merge(true, false); s != grantAll {
+		t.Fatalf("got %v, want grantAll", s)
+	}
+	if s = s.merge(false, false); s != grantMixed {
+		t.Fatalf("got %v, want grantMixed", s)
+	}
+	if s = s.merge(true, false); s != grantMixed {
+		t.Fatalf("got %v, want grantMixed", s)
 	}
 }
 

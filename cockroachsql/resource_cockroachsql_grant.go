@@ -487,13 +487,13 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 	}
 
 	if len(considered) > 0 && grantedSet.Len() > 0 {
-		perPrivilege := make(map[string]bool)
+		perPrivilege := make(map[string]grantState)
 		for _, p := range grantedSet.List() {
-			g := true
-			for _, obj := range considered {
-				g = g && objectPrivGrantable[obj][p.(string)]
+			var state grantState
+			for i, obj := range considered {
+				state = state.merge(objectPrivGrantable[obj][p.(string)], i == 0)
 			}
-			perPrivilege[p.(string)] = g
+			perPrivilege[p.(string)] = state
 		}
 		grantedSet = applyGrantOption(d, grantedSet, perPrivilege)
 	}
@@ -504,30 +504,54 @@ func readRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceDat
 	return nil
 }
 
-// applyGrantOption sets with_grant_option from the observed rows. When only
-// some privileges carry the grant option, it keeps with_grant_option as it is
-// in state and drops the privileges that disagree with it, so the plan shows
-// a privileges diff and the update re-applies them consistently. This stays
-// stable across repeated refreshes.
-func applyGrantOption(d *schema.ResourceData, granted *schema.Set, grantable map[string]bool) *schema.Set {
-	allGrantable, anyGrantable := true, false
-	for _, g := range grantable {
-		allGrantable = allGrantable && g
-		anyGrantable = anyGrantable || g
+// grantState is the grant option observed for one privilege across all the
+// rows (objects) it was granted on.
+type grantState int
+
+const (
+	grantNone grantState = iota
+	grantAll
+	grantMixed
+)
+
+func (s grantState) merge(grantable bool, first bool) grantState {
+	observed := grantNone
+	if grantable {
+		observed = grantAll
+	}
+	if first || s == observed {
+		return observed
+	}
+	return grantMixed
+}
+
+// applyGrantOption sets with_grant_option from the observed rows. When the
+// grant option is not uniform (across privileges or objects), it keeps
+// with_grant_option as it is in state and drops the privileges that are not
+// uniformly consistent with it, so the plan shows a privileges diff and the
+// update re-applies them. This stays stable across repeated refreshes.
+func applyGrantOption(d *schema.ResourceData, granted *schema.Set, states map[string]grantState) *schema.Set {
+	allGrantable, noneGrantable := true, true
+	for _, st := range states {
+		allGrantable = allGrantable && st == grantAll
+		noneGrantable = noneGrantable && st == grantNone
 	}
 	switch {
 	case allGrantable:
 		d.Set("with_grant_option", true)
 		return granted
-	case !anyGrantable:
+	case noneGrantable:
 		d.Set("with_grant_option", false)
 		return granted
 	}
 
-	current := d.Get("with_grant_option").(bool)
+	want := grantNone
+	if d.Get("with_grant_option").(bool) {
+		want = grantAll
+	}
 	consistent := schema.NewSet(schema.HashString, []any{})
 	for _, p := range granted.List() {
-		if grantable[p.(string)] == current {
+		if states[p.(string)] == want {
 			consistent.Add(p)
 		}
 	}
@@ -631,7 +655,11 @@ func revokeRolePrivileges(ctx context.Context, db QueryAble, d *schema.ResourceD
 				// Revoke the configured privileges as well, so a grant option
 				// that was added out of band is removed before re-granting.
 				if name == "privileges" {
-					return old.(*schema.Set).Union(new.(*schema.Set))
+					privileges := old.(*schema.Set).Union(new.(*schema.Set))
+					if privileges.Contains("ALL") {
+						return schema.NewSet(schema.HashString, []any{"ALL"})
+					}
+					return privileges
 				}
 				return old
 			}

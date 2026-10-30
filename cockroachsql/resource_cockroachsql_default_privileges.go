@@ -263,7 +263,7 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 	cols, _ := rows.Columns()
 	log.Printf("[DEBUG] cockroachsql_default_privileges: found columns %v", cols)
 	var privileges []string
-	grantable := make(map[string]bool)
+	grantable := make(map[string]grantState)
 	for rows.Next() {
 		dest := make([]any, len(cols))
 		vals := make([]sql.NullString, len(cols))
@@ -302,7 +302,9 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 
 		if strings.EqualFold(r_object_type, targetPlural) && strings.EqualFold(strings.Trim(r_grantee, `"`), strings.Trim(role, `"`)) {
 			privileges = append(privileges, strings.ToUpper(r_privilege_type))
-			grantable[strings.ToUpper(r_privilege_type)] = isTruthy(m["is_grantable"])
+			priv := strings.ToUpper(r_privilege_type)
+			state, seen := grantable[priv]
+			grantable[priv] = state.merge(isTruthy(m["is_grantable"]), !seen)
 		}
 	}
 	if err := rows.Err(); err != nil {
