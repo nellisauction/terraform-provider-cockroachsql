@@ -55,6 +55,37 @@ func TestParseRoleOptions(t *testing.T) {
 	}
 }
 
+func TestApplyGrantOption(t *testing.T) {
+	tests := []struct {
+		name          string
+		grantable     map[string]bool
+		state         bool
+		wantOption    bool
+		wantPrivCount int
+	}{
+		{"all grantable", map[string]bool{"SELECT": true, "INSERT": true}, false, true, 2},
+		{"none grantable", map[string]bool{"SELECT": false, "INSERT": false}, true, false, 2},
+		{"mixed, state false", map[string]bool{"SELECT": true, "INSERT": false}, false, false, 1},
+		{"mixed, state true", map[string]bool{"SELECT": true, "INSERT": false}, true, true, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := schema.TestResourceDataRaw(t, resourceCockroachSQLGrant().Schema, map[string]any{
+				"role": "r", "database": "db", "object_type": "table", "privileges": []any{"SELECT", "INSERT"},
+				"with_grant_option": tt.state,
+			})
+			granted := schema.NewSet(schema.HashString, []any{"SELECT", "INSERT"})
+			got := applyGrantOption(d, granted, tt.grantable)
+			if d.Get("with_grant_option").(bool) != tt.wantOption {
+				t.Errorf("with_grant_option = %v, want %v", d.Get("with_grant_option"), tt.wantOption)
+			}
+			if got.Len() != tt.wantPrivCount {
+				t.Errorf("privileges = %v, want %d entries", got.List(), tt.wantPrivCount)
+			}
+		})
+	}
+}
+
 func TestAccCockroachSQLGrant_DDLTransactionIsAtomic(t *testing.T) {
 	skipIfNotAcc(t)
 	testAccPreCheck(t)
@@ -161,7 +192,7 @@ resource "cockroachsql_grant" "test" {
   schema            = "wgo_schema"
   object_type       = "table"
   objects           = ["t"]
-  privileges        = ["SELECT"]
+  privileges        = ["SELECT", "INSERT"]
   with_grant_option = %t
 }`, getTestDatabaseName(), withGrantOption)
 	}
@@ -304,7 +335,7 @@ resource "cockroachsql_default_privileges" "test" {
 
 func TestAccCockroachSQLRole_ReadWithoutShowRolesPrivilege(t *testing.T) {
 	skipIfNotAcc(t)
-	const limitedUser = "tf_tests_createrole_only"
+	limitedUser := "tf_tests_createrole_only_" + randomTestPassword(t)[:8]
 	config := getTestConfig(t)
 	if config.ConnectionURL != "" {
 		t.Skip("COCKROACH_URL overrides the provider username and password")

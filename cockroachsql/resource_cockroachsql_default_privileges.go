@@ -263,7 +263,7 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 	cols, _ := rows.Columns()
 	log.Printf("[DEBUG] cockroachsql_default_privileges: found columns %v", cols)
 	var privileges []string
-	grantable := true
+	grantable := make(map[string]bool)
 	for rows.Next() {
 		dest := make([]any, len(cols))
 		vals := make([]sql.NullString, len(cols))
@@ -302,9 +302,7 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 
 		if strings.EqualFold(r_object_type, targetPlural) && strings.EqualFold(strings.Trim(r_grantee, `"`), strings.Trim(role, `"`)) {
 			privileges = append(privileges, strings.ToUpper(r_privilege_type))
-			if !isTruthy(m["is_grantable"]) {
-				grantable = false
-			}
+			grantable[strings.ToUpper(r_privilege_type)] = isTruthy(m["is_grantable"])
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -319,11 +317,10 @@ func readRoleDefaultPrivileges(ctx context.Context, db QueryAble, d *schema.Reso
 		}
 	}
 
-	if len(privileges) > 0 {
-		d.Set("with_grant_option", grantable)
-	}
-
 	privilegesSet := stringSliceToSet(privileges)
+	if len(privileges) > 0 {
+		privilegesSet = applyGrantOption(d, privilegesSet, grantable)
+	}
 	privilegesEqual := resourcePrivilegesEqual(privilegesSet, d)
 
 	if !privilegesEqual {
