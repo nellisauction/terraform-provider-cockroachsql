@@ -22,7 +22,7 @@ func TestAccCockroachSQLDatabase_Basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckCockroachSQLDatabaseExists("cockroachsql_database.default_opts"),
 					resource.TestCheckResourceAttr(
-						"cockroachsql_database.default_opts", "owner", "root"),
+						"cockroachsql_database.default_opts", "owner", getTestConfig(t).Username),
 					resource.TestCheckResourceAttr(
 						"cockroachsql_database.default_opts", "name", "default_db"),
 					testAccCheckCockroachSQLDatabaseExists("cockroachsql_database.modified_opts"),
@@ -52,7 +52,7 @@ func TestAccCockroachSQLDatabase_DefaultOwner(t *testing.T) {
 			{
 				Config: testAccCockroachSQLDatabaseConfig,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("cockroachsql_database.mydb_default_owner", "owner", "root"),
+					resource.TestCheckResourceAttr("cockroachsql_database.mydb_default_owner", "owner", getTestConfig(t).Username),
 				),
 			},
 		},

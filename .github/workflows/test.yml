@@ -74,9 +74,38 @@ jobs:
             make vet
             make testacc
 
+  test-secure:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    env:
+      CRDB_IMAGE: cockroachdb/cockroach:latest-v26.1
+      TF_ACC: "true"
+      COCKROACH_HOST: localhost
+      COCKROACH_PORT: "26257"
+      COCKROACH_USER: tf_admin
+      COCKROACH_SSLMODE: require
+      COCKROACH_DATABASE: tf_tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+
+      - name: Start secure CockroachDB with a non-root admin user
+        run: |
+          password=$(openssl rand -hex 16)
+          echo "::add-mask::$password"
+          echo "COCKROACH_PASSWORD=$password" >> "$GITHUB_ENV"
+          scripts/start-secure-cockroach.sh "$CRDB_IMAGE" "$COCKROACH_PORT" "$COCKROACH_USER" "$password" "$COCKROACH_DATABASE"
+
+      - name: Run acceptance tests
+        run: make testacc
+
   allow-merge:
     if: always()
-    needs: [lint, build-devcontainer, test]
+    needs: [lint, build-devcontainer, test, test-secure]
     uses: ./.github/workflows/allow-merge.yml
     with:
       failed: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}

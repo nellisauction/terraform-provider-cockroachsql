@@ -119,6 +119,16 @@ func getTestDBNames(dbSuffix string) (dbName string, roleName string) {
 	return
 }
 
+// setupRolePassword returns the password given to roles created by
+// setupTestDatabase. CockroachDB only accepts passwords in secure mode, so it
+// is empty when COCKROACH_INSECURE is set.
+func setupRolePassword() string {
+	if strings.EqualFold(os.Getenv("COCKROACH_INSECURE"), "true") {
+		return ""
+	}
+	return testRolePassword
+}
+
 // setupTestDatabase creates all needed resources before executing a terraform test
 // and provides the teardown function to delete all these resources.
 func setupTestDatabase(t *testing.T, createDB, createRole bool) (string, func()) {
@@ -129,9 +139,13 @@ func setupTestDatabase(t *testing.T, createDB, createRole bool) (string, func())
 	dbName, roleName := getTestDBNames(suffix)
 
 	if createRole {
+		createOpts := "LOGIN"
+		if password := setupRolePassword(); password != "" {
+			createOpts += fmt.Sprintf(" PASSWORD '%s'", password)
+		}
 		dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf(
-			"CREATE ROLE %s LOGIN",
-			roleName,
+			"CREATE ROLE %s %s",
+			roleName, createOpts,
 		))
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -295,7 +309,7 @@ func createTestSequences(t *testing.T, dbSuffix string, sequences []string, owne
 func connectAsTestRole(t *testing.T, roleName string, dbName string) *sql.DB {
 	config := getTestConfig(t)
 	config.Username = roleName
-	config.Password = ""
+	config.Password = setupRolePassword()
 
 	db, err := sql.Open(proxyDriverName, config.connStr(dbName))
 	if err != nil {

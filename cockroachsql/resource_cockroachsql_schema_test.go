@@ -119,7 +119,7 @@ resource "cockroachsql_schema" "test" {
 				Config: config,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckCockroachSQLSchemaExists("cockroachsql_schema.test", "public"),
-					resource.TestCheckResourceAttr("cockroachsql_schema.test", "owner", "root"),
+					resource.TestCheckResourceAttr("cockroachsql_schema.test", "owner", getTestConfig(t).Username),
 				),
 			},
 		},
