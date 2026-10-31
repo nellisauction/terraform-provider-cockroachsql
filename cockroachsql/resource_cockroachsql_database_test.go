@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -354,3 +355,43 @@ resource "cockroachsql_database" "mydb_default_owner" {
   name = "mydb_default_owner"
 }
 `
+
+func TestGetDBName(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, resourceCockroachSQLDatabase().Schema, map[string]any{"name": "renamed"})
+	d.SetId("original")
+	if got := getDBName(d); got != "renamed" {
+		t.Errorf("getDBName() = %q, want the name in state %q", got, "renamed")
+	}
+
+	imported := schema.TestResourceDataRaw(t, resourceCockroachSQLDatabase().Schema, map[string]any{})
+	imported.SetId("imported_db")
+	if got := getDBName(imported); got != "imported_db" {
+		t.Errorf("getDBName() on import = %q, want the ID %q", got, "imported_db")
+	}
+}
+
+// A rename updates the ID, but the Pulumi bridge keeps the original one.
+// Read must still find the database by the name in state.
+func TestAccCockroachSQLDatabase_ReadAfterRenameWithStaleID(t *testing.T) {
+	skipIfNotAcc(t)
+	testAccPreCheck(t)
+
+	dbName := fmt.Sprintf("tf_tests_stale_id_db_%d", time.Now().UnixNano())
+	config := getTestConfig(t)
+	dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf("CREATE DATABASE %s", dbName))
+	defer dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+
+	db, err := testAccProvider.Meta().(*Client).Connect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := schema.TestResourceDataRaw(t, resourceCockroachSQLDatabase().Schema, map[string]any{"name": dbName})
+	d.SetId(dbName + "_before_rename")
+	if err := resourceCockroachSQLDatabaseRead(context.Background(), db, d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Id() != dbName {
+		t.Fatalf("Read with a stale ID set ID %q, want %q", d.Id(), dbName)
+	}
+}
