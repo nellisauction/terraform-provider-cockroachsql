@@ -25,12 +25,19 @@ crdb cert create-client root --certs-dir=/certs --ca-key=/safe/ca.key
 docker run -d --name crdb-secure -p "$port:26257" -v "$workdir/certs:/certs" "$image" \
   start-single-node --certs-dir=/certs --listen-addr=:26257 --advertise-addr=localhost:26257 --http-addr=:8080
 
+ready=false
 for _ in $(seq 1 30); do
-  if docker exec crdb-secure cockroach sql --certs-dir=/certs -e 'SELECT 1' >/dev/null 2>&1; then
+  if timeout 10 docker exec crdb-secure cockroach sql --certs-dir=/certs -e 'SELECT 1' >/dev/null 2>&1; then
+    ready=true
     break
   fi
   sleep 2
 done
+if [ "$ready" != true ]; then
+  echo "CockroachDB did not become ready" >&2
+  docker logs crdb-secure >&2
+  exit 1
+fi
 
 docker exec -i crdb-secure cockroach sql --certs-dir=/certs <<SQL
 CREATE USER ${user} WITH PASSWORD '${password}';
