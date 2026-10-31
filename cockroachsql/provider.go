@@ -34,7 +34,7 @@ func multiEnvDefaultFunc(keys []string, defaultValue any) schema.SchemaDefaultFu
 
 // Provider returns a terraform.ResourceProvider.
 func Provider() *schema.Provider {
-	return &schema.Provider{
+	p := &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"host": {
 				Type:     schema.TypeString,
@@ -194,6 +194,8 @@ func Provider() *schema.Provider {
 
 		ConfigureContextFunc: providerConfigure,
 	}
+	serializeWrites(p)
+	return p
 }
 
 func validateExpectedVersion(v any, key string) (warnings []string, errors []error) {
