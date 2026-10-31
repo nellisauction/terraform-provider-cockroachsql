@@ -337,6 +337,8 @@ func renameDB(ctx context.Context, db *DBConnection, d *schema.ResourceData) err
 
 	query := fmt.Sprintf("ALTER DATABASE %s RENAME TO %s", pq.QuoteIdentifier(oldName), pq.QuoteIdentifier(newName))
 	if _, err := db.ExecContext(ctx, query); err != nil {
+		// Keep the old name in state: Read looks the database up by name.
+		d.Partial(true)
 		return fmt.Errorf("error renaming database %q to %q: %w", oldName, newName, err)
 	}
 

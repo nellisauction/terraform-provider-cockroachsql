@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -375,9 +376,9 @@ func TestAccCockroachSQLDatabase_ReadAfterRenameWithStaleID(t *testing.T) {
 	skipIfNotAcc(t)
 	testAccPreCheck(t)
 
-	const dbName = "tf_tests_stale_id_db"
+	dbName := fmt.Sprintf("tf_tests_stale_id_db_%d", time.Now().UnixNano())
 	config := getTestConfig(t)
-	dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
+	dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf("CREATE DATABASE %s", dbName))
 	defer dbExecute(t, config.connStr(getTestDatabaseName()), fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
 
 	db, err := testAccProvider.Meta().(*Client).Connect(context.Background())
@@ -386,7 +387,7 @@ func TestAccCockroachSQLDatabase_ReadAfterRenameWithStaleID(t *testing.T) {
 	}
 
 	d := schema.TestResourceDataRaw(t, resourceCockroachSQLDatabase().Schema, map[string]any{"name": dbName})
-	d.SetId("tf_tests_stale_id_db_before_rename")
+	d.SetId(dbName + "_before_rename")
 	if err := resourceCockroachSQLDatabaseRead(context.Background(), db, d); err != nil {
 		t.Fatal(err)
 	}
