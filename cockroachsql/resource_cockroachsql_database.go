@@ -229,8 +229,19 @@ func resourceCockroachSQLDatabaseDelete(ctx context.Context, db *DBConnection, d
 	return nil
 }
 
+// getDBName returns the database to look up. It prefers the name in state
+// over the ID: a rename updates the ID, but callers such as the Pulumi bridge
+// keep the original ID, so the ID can be stale. On import the state is empty
+// and the ID is the database name.
+func getDBName(d *schema.ResourceData) string {
+	if name := d.Get(dbNameAttr).(string); name != "" {
+		return name
+	}
+	return d.Id()
+}
+
 func resourceCockroachSQLDatabaseExists(ctx context.Context, db *DBConnection, d *schema.ResourceData) (bool, error) {
-	return dbExists(ctx, db, d.Id())
+	return dbExists(ctx, db, getDBName(d))
 }
 
 func resourceCockroachSQLDatabaseRead(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
@@ -247,7 +258,7 @@ func resourceCockroachSQLDatabaseRead(ctx context.Context, db *DBConnection, d *
 }
 
 func resourceCockroachSQLDatabaseReadImpl(ctx context.Context, db *DBConnection, d *schema.ResourceData) error {
-	dbId := d.Id()
+	dbId := getDBName(d)
 	var dbName, ownerName string
 	err := db.QueryRowContext(ctx, "SELECT d.datname, pg_catalog.pg_get_userbyid(d.datdba) from pg_database d WHERE datname=$1", dbId).Scan(&dbName, &ownerName)
 	switch {
@@ -288,6 +299,7 @@ func resourceCockroachSQLDatabaseReadImpl(ctx context.Context, db *DBConnection,
 		return fmt.Errorf("error reading database: %w", err)
 	}
 
+	d.SetId(dbName)
 	d.Set(dbNameAttr, dbName)
 	d.Set(dbOwnerAttr, ownerName)
 	d.Set(dbEncodingAttr, dbEncoding)
@@ -325,6 +337,8 @@ func renameDB(ctx context.Context, db *DBConnection, d *schema.ResourceData) err
 
 	query := fmt.Sprintf("ALTER DATABASE %s RENAME TO %s", pq.QuoteIdentifier(oldName), pq.QuoteIdentifier(newName))
 	if _, err := db.ExecContext(ctx, query); err != nil {
+		// Keep the old name in state: Read looks the database up by name.
+		d.Partial(true)
 		return fmt.Errorf("error renaming database %q to %q: %w", oldName, newName, err)
 	}
 
